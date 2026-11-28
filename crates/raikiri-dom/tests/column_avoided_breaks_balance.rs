@@ -6,8 +6,9 @@
 //!
 //! The expected border boxes are the ones Chromium computes for the same
 //! markup in an 800px by 600px viewport, with no margin on the body and 10px
-//! Ahem text. `o` is the container; the wrapper `c` is not checked. A box that
-//! breaks lists one border box per column it is in, in column order.
+//! Ahem text. `o` is the container; the wrappers `c`, `w` and `x` are not
+//! checked. A box that breaks lists one border box per column it is in, in
+//! column order.
 
 use raikiri_html::{
     FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
@@ -366,6 +367,64 @@ const CASES: &[Case] = &[
             ("e", (100.0, 0.0, 100.0, 10.0)),
             ("f", (100.0, 10.0, 100.0, 10.0)),
             ("g", (100.0, 20.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "avoid_after_before_a_wrapper",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px\"><div id=a style='break-after:avoid'>aa</div><div id=c><div id=b>bb</div></div><div id=d>dd</div><div id=e>ee</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 20.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (0.0, 10.0, 100.0, 10.0)),
+            ("d", (100.0, 0.0, 100.0, 10.0)),
+            ("e", (100.0, 10.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "wrapper_padding_moves_with_its_box",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px\"><div id=a>aa</div><div id=w style='padding-top:5px'><div id=x><div id=b>bb</div><div id=k style='break-before:avoid'>kk</div></div></div><div id=d>dd</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 25.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 5.0, 100.0, 10.0)),
+            ("k", (100.0, 15.0, 100.0, 10.0)),
+            ("d", (200.0, 0.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "later_column_end_moves_after_one_that_cannot",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px;height:20px;column-fill:auto\"><div id=a>aa</div><div id=b style='break-before:avoid'>bb</div><div id=d>dd</div><div id=e>ee</div><div id=f style='break-before:avoid'>ff</div><div id=g>gg</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 20.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (0.0, 10.0, 100.0, 10.0)),
+            ("d", (100.0, 0.0, 100.0, 10.0)),
+            ("e", (200.0, 0.0, 100.0, 10.0)),
+            ("f", (200.0, 10.0, 100.0, 10.0)),
+            ("g", (300.0, 0.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "avoid_before_after_a_wrapper",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px\"><div id=a>aa</div><div id=c><div id=b>bb</div><div id=k>kk</div></div><div id=d style='break-before:avoid'>dd</div><div id=e>ee</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 20.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (0.0, 10.0, 100.0, 10.0)),
+            ("k", (100.0, 0.0, 100.0, 10.0)),
+            ("d", (100.0, 10.0, 100.0, 10.0)),
+            ("e", (200.0, 0.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "margins_at_a_moved_break",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px\"><div id=a>aa</div><div id=b style='margin-bottom:10px'>bb</div><div id=k style='break-before:avoid;margin-top:10px'>kk</div><div id=d>dd</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 30.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 0.0, 100.0, 10.0)),
+            ("k", (100.0, 20.0, 100.0, 10.0)),
+            ("d", (200.0, 0.0, 100.0, 10.0)),
         ],
     },
 ];
