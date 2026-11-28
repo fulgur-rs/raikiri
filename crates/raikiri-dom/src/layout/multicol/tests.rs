@@ -10388,3 +10388,155 @@ fn balanced_columns_that_end_in_a_cut_settle_on_the_least_height() {
     assert_eq!(box_rect(&doc, boxes[1]), (60.0, 20.0, 40.0, 60.0));
     assert_eq!(column_ranges(&doc, container), [(0, 1, 2, 120.0, 0.0)]);
 }
+
+/// Append `count` lines of one `x` each to `node`.
+fn append_lines(doc: &mut Document, node: usize, count: usize, letter: &str) {
+    for line in 0..count {
+        doc.append_text(node, letter);
+        if line + 1 < count {
+            doc.append_element(Some(node), "br", None::<&str>);
+        }
+    }
+}
+
+/// A column container whose own lines are `before` lines, a block of
+/// `block_css` holding `inner` lines, a span with one line, and, when
+/// `line_after`, one more line, laid out. The document, the container and
+/// the block.
+fn lines_around_a_block(
+    container_css: &str,
+    before: usize,
+    block_css: &str,
+    inner: usize,
+    line_after: bool,
+) -> (Document, usize, usize) {
+    let (mut doc, container, boxes) =
+        column_container(container_css, &[Part::Lines(before), Part::Box(block_css)]);
+    append_lines(&mut doc, boxes[0], inner, "y");
+    let tail = doc.append_element(Some(container), "span", None::<&str>);
+    doc.append_text(tail, "x");
+    if line_after {
+        doc.append_element(Some(container), "br", None::<&str>);
+        doc.append_text(container, "x");
+    }
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    (doc, container, boxes[0])
+}
+
+/// The line ranges of the block `node` in its columns, as
+/// `(first line, end, column, x, y)`, relative to the block.
+fn block_ranges(doc: &Document, node: usize) -> Vec<(usize, usize, usize, f32, f32)> {
+    let ranges = column_ranges(doc, node);
+    assert!(
+        doc.nodes[node]
+            .ifc
+            .as_ref()
+            .is_some_and(|root| root.multicol_fragment_origins_recorded),
+        "each piece of the block is the origin of the lines it holds"
+    );
+    ranges
+}
+
+#[test]
+fn a_column_end_breaks_between_the_lines_of_a_block_among_lines() {
+    // Two lines leave 20px of the first 60px column to a block of three
+    // lines: its first line ends the column and the other two, with the line
+    // after the block, go on at the top of the second. Values match Chromium,
+    // with or without a background on the block.
+    for block_css in ["display:block", "display:block;background:red"] {
+        let (doc, container, block) =
+            lines_around_a_block("height:60px;column-fill:auto", 2, block_css, 3, false);
+        assert_eq!(box_rect(&doc, block), (0.0, 40.0, 40.0, 60.0));
+        assert_eq!(
+            pieces_of(&doc, block),
+            [(0, 0.0, 0.0, 40.0, 20.0), (1, 60.0, -40.0, 40.0, 40.0)]
+        );
+        assert_eq!(
+            block_ranges(&doc, block),
+            [(0, 1, 0, 0.0, 0.0), (1, 3, 1, 60.0, -40.0)]
+        );
+        assert_eq!(
+            column_ranges(&doc, container),
+            [(0, 2, 0, 0.0, 0.0), (2, 3, 1, 60.0, 40.0)]
+        );
+    }
+}
+
+#[test]
+fn the_balance_breaks_between_the_lines_of_a_block_among_lines() {
+    // Six lines in all, two of them in the block, balance to three in each
+    // column: the block's second line starts the second column. Values
+    // match Chromium.
+    let (doc, container, block) = lines_around_a_block("", 2, "display:block", 2, true);
+    assert_eq!(doc.nodes[container].layout.size.height, 60.0);
+    assert_eq!(
+        pieces_of(&doc, block),
+        [(0, 0.0, 0.0, 40.0, 20.0), (1, 60.0, -40.0, 40.0, 20.0)]
+    );
+    assert_eq!(
+        block_ranges(&doc, block),
+        [(0, 1, 0, 0.0, 0.0), (1, 2, 1, 60.0, -40.0)]
+    );
+    assert_eq!(
+        column_ranges(&doc, container),
+        [(0, 2, 0, 0.0, 0.0), (2, 4, 1, 60.0, 20.0)]
+    );
+    // Eight lines, four of them in the block, balance to four in each.
+    let (doc, container, block) = lines_around_a_block("", 2, "display:block", 4, true);
+    assert_eq!(doc.nodes[container].layout.size.height, 80.0);
+    assert_eq!(
+        pieces_of(&doc, block),
+        [(0, 0.0, 0.0, 40.0, 40.0), (1, 60.0, -40.0, 40.0, 40.0)]
+    );
+    assert_eq!(
+        block_ranges(&doc, block),
+        [(0, 2, 0, 0.0, 0.0), (2, 4, 1, 60.0, -40.0)]
+    );
+}
+
+#[test]
+fn the_orphans_and_widows_of_a_block_among_lines_keep_its_own_lines() {
+    // The container keeps one line on each side of a break, the block two:
+    // of its four lines, the first column takes two after the line before it,
+    // and the other two go on. Values match Chromium.
+    let (doc, container, block) = lines_around_a_block(
+        "height:60px;column-fill:auto",
+        1,
+        "display:block;orphans:2;widows:2",
+        4,
+        false,
+    );
+    assert_eq!(box_rect(&doc, block), (0.0, 20.0, 40.0, 80.0));
+    assert_eq!(
+        pieces_of(&doc, block),
+        [(0, 0.0, 0.0, 40.0, 40.0), (1, 60.0, -20.0, 40.0, 40.0)]
+    );
+    assert_eq!(
+        block_ranges(&doc, block),
+        [(0, 2, 0, 0.0, 0.0), (2, 4, 1, 60.0, -20.0)]
+    );
+    assert_eq!(
+        column_ranges(&doc, container),
+        [(0, 1, 0, 0.0, 0.0), (1, 2, 1, 60.0, 40.0)]
+    );
+}
+
+#[test]
+fn a_block_among_lines_with_margins_goes_on_whole() {
+    // The margin before the block takes what the first column had left for
+    // its first line, so the block goes on whole in the second column and the
+    // line after it in the third. Values match Chromium.
+    let (doc, container, block) = lines_around_a_block(
+        "height:60px;column-fill:auto",
+        2,
+        "display:block;margin-top:10px;margin-bottom:10px",
+        3,
+        false,
+    );
+    assert_eq!(box_rect(&doc, block), (60.0, 0.0, 40.0, 60.0));
+    assert!(pieces_of(&doc, block).is_empty());
+    assert_eq!(
+        column_ranges(&doc, container),
+        [(0, 2, 0, 0.0, 0.0), (2, 3, 2, 120.0, 0.0)]
+    );
+}

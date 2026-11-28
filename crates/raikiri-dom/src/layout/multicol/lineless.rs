@@ -3097,6 +3097,17 @@ pub(super) fn slices_among_lines(tree: &LayoutSession<'_>, child: usize) -> bool
         && slices_sized_leaf(tree, child)
 }
 
+/// Whether `child`, a block among the lines of a paragraph, is a plain block
+/// of lines that a column end may break between: one with no border or
+/// padding above or below its lines, a height that follows them, and nothing
+/// that keeps it whole (see [`slices_sized_leaf`]).
+pub(super) fn splits_between_lines(tree: &LayoutSession<'_>, child: usize) -> bool {
+    is_plain_block_holding_lines(tree, child)
+        && !has_block_edge_decorations(&style_of(tree, child))
+        && super::paragraph_group::height_follows_content(tree, child)
+        && slices_sized_leaf(tree, child)
+}
+
 /// Whether the column ends may cut `idx`, a sized box with nothing inside it,
 /// with its pieces painted as [`slices_decorations`] says: a box that avoids
 /// breaks, one that is monolithic, one that repeats its decorations at each

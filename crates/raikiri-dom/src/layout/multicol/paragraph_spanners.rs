@@ -70,10 +70,30 @@ fn moves_whole(tree: &LayoutSession<'_>, node: usize) -> bool {
 /// groups of columns.
 pub(crate) fn retire_pieces(tree: &mut LayoutSession<'_>, root: &IfcRoot) {
     for box_ in &root.boxes {
-        if box_.kind == IfcBoxKind::Block && lineless::slices_among_lines(tree, box_.node) {
+        if box_.kind == IfcBoxKind::Block
+            && (lineless::slices_among_lines(tree, box_.node)
+                || lineless::splits_between_lines(tree, box_.node))
+        {
             tree.fragment_tree.retire_previous_roots(box_.node);
         }
     }
+}
+
+/// The lines of `node`, a block among the lines of a paragraph that a column
+/// end may break between them: a plain block that holds nothing but lines,
+/// with no border or padding above or below them, whose height is that of
+/// its lines, and that does not avoid breaks inside it. `None` for any other
+/// block.
+fn lines_between_breaks<'a>(tree: &'a LayoutSession<'_>, node: usize) -> Option<&'a IfcLines> {
+    let own = &tree.nodes[node];
+    let root = own.ifc.as_ref()?;
+    let lines = root.lines.as_ref()?;
+    (lineless::splits_between_lines(tree, node)
+        && root.boxes.is_empty()
+        && root.generated_blocks.is_empty()
+        && lines.block_line_starts.is_empty()
+        && !lines.lines.is_empty())
+    .then_some(lines)
 }
 
 /// Whether the block `node` of a paragraph is a column spanner, which the
@@ -247,13 +267,38 @@ enum Unit {
     /// ends cut, as CSS Fragmentation 3, 4.4 allows: the rest of it goes on
     /// at the top of the next column.
     Leaf(usize),
+    /// A line of a block that holds nothing but lines, which a column end
+    /// may break between (CSS Fragmentation 3, 4.4): its index in the block,
+    /// its offset in the block's content box and its baseline below its
+    /// top, and the `orphans` and `widows` of the block.
+    Inner {
+        node: usize,
+        line: usize,
+        offset: f32,
+        baseline: f32,
+        orphans: usize,
+        widows: usize,
+    },
 }
 
 impl Unit {
+    /// The block a block unit stands for; `None` for a line, of the
+    /// paragraph or of a block.
     fn block(self) -> Option<usize> {
         match self {
-            Unit::Line(_) => None,
+            Unit::Line(_) | Unit::Inner { .. } => None,
             Unit::Block(node) | Unit::Leaf(node) => Some(node),
+        }
+    }
+
+    /// The `orphans` and `widows` of the run of lines the unit falls in, of
+    /// the paragraph's `context` or of its block.
+    fn keeps(self, context: FragmentationContext) -> (usize, usize) {
+        match self {
+            Unit::Inner {
+                orphans, widows, ..
+            } => (orphans, widows),
+            _ => (context.orphans, context.widows),
         }
     }
 }
@@ -302,6 +347,28 @@ fn units_of(
         while let Some(&(node, _, index)) = pending.next_if(|&&(_, after, _)| after <= line) {
             let block = block_box(lines, index, node);
             origin.get_or_insert(block.start);
+            if let Some(inner) = lines_between_breaks(tree, node) {
+                let count = inner.lines.len();
+                for (line, entry) in inner.lines.iter().enumerate() {
+                    let top = block.top + entry.block_offset();
+                    let bottom = if line + 1 == count {
+                        block.bottom
+                    } else {
+                        top + entry.block_size()
+                    };
+                    let unit = Unit::Inner {
+                        node,
+                        line,
+                        offset: entry.block_offset(),
+                        baseline: entry.baseline(shodo::geometry::BaselineKind::Alphabetic),
+                        orphans: tree.nodes[node].paragraph_orphans,
+                        widows: tree.nodes[node].paragraph_widows,
+                    };
+                    units.push((unit, top, bottom));
+                }
+                *end = block.end;
+                continue;
+            }
             let unit = if lineless::slices_among_lines(tree, node) {
                 Unit::Leaf(node)
             } else {
@@ -338,7 +405,7 @@ fn units_first_baseline(
         .collect();
     let mut done = std::collections::BTreeSet::new();
     let mut highest: Option<f32> = None;
-    for (&(unit, _, _), &(column, dy)) in units.iter().zip(&placed.columns) {
+    for (&(unit, top, _), &(column, dy)) in units.iter().zip(&placed.columns) {
         if done.contains(&column) {
             continue;
         }
@@ -348,6 +415,7 @@ fn units_first_baseline(
             Unit::Line(line) => lines.lines.get(line).map(|line| {
                 line.block_offset() + dy + line.baseline(shodo::geometry::BaselineKind::Alphabetic)
             }),
+            Unit::Inner { baseline, .. } => Some(top + baseline + dy),
             Unit::Block(node) | Unit::Leaf(node) => indices
                 .get(&node)
                 .and_then(|&index| block_box(lines, index, node).first_baseline)
@@ -374,6 +442,9 @@ struct PlacedUnits {
     /// its pieces: the column of each, and its block offset and size in the
     /// content box.
     pieces: Vec<(usize, Vec<Piece>)>,
+    /// The lines of the blocks that hold only lines, one fragment for each
+    /// run of them in a column, as for `fragments`, by block.
+    inner: Vec<(usize, Vec<MulticolTextFragment>)>,
     height: f32,
 }
 
@@ -430,6 +501,7 @@ fn place_units(
     let mut fragments: Vec<MulticolTextFragment> = Vec::new();
     let mut columns = Vec::with_capacity(units.len());
     let mut pieces: Vec<(usize, Vec<Piece>)> = Vec::new();
+    let mut inner: Vec<(usize, Vec<MulticolTextFragment>)> = Vec::new();
     let mut tallest = 0.0f32;
     for (column, start) in starts.iter().enumerate() {
         let next = starts.get(column + 1);
@@ -450,6 +522,22 @@ fn place_units(
                 match pieces.last_mut() {
                     Some((last, list)) if *last == index => list.push(piece),
                     _ => pieces.push((index, vec![piece])),
+                }
+            }
+            if let Unit::Inner { node, line, .. } = unit {
+                let fragment = MulticolTextFragment {
+                    line_start: line,
+                    line_end: line + 1,
+                    fragmentainer: column,
+                    x: context.column_offset_x(column),
+                    y: y + top - origin,
+                };
+                match inner.last_mut() {
+                    Some((last, runs)) if *last == node => match runs.last_mut() {
+                        Some(run) if run.fragmentainer == column => run.line_end = line + 1,
+                        _ => runs.push(fragment),
+                    },
+                    _ => inner.push((node, vec![fragment])),
                 }
             }
             let Unit::Line(line) = unit else {
@@ -487,6 +575,7 @@ fn place_units(
         fragments,
         columns,
         pieces,
+        inner,
         height: tallest,
     }
 }
@@ -614,7 +703,7 @@ fn column_starts(
             index += 1;
             continue;
         }
-        let start = keep_lines_together(&runs, index, current.unit, context)
+        let start = keep_lines_together(&runs, index, current.unit, unit.keeps(context))
             .filter(|&start| start > current.unit)
             .unwrap_or(index);
         starts.push(ColumnStart {
@@ -630,14 +719,24 @@ fn column_starts(
 /// For each of `units`, the run of lines it falls in, as the indices of its
 /// first unit and of the unit after it; `None` for a block.
 fn line_runs(units: &[(Unit, f32, f32)]) -> Vec<Option<(usize, usize)>> {
+    // The run a unit belongs to: the paragraph's own lines, or a block's.
+    let run_of = |unit: Unit| match unit {
+        Unit::Line(_) => Some(None),
+        Unit::Inner { node, .. } => Some(Some(node)),
+        Unit::Block(_) | Unit::Leaf(_) => None,
+    };
     let mut runs = vec![None; units.len()];
     let mut index = 0;
     while index < units.len() {
+        let Some(run) = run_of(units[index].0) else {
+            index += 1;
+            continue;
+        };
         let end = (index..units.len())
-            .find(|&at| !matches!(units[at].0, Unit::Line(_)))
+            .find(|&at| run_of(units[at].0) != Some(run))
             .unwrap_or(units.len());
         runs[index..end].fill(Some((index, end)));
-        index = end + 1;
+        index = end;
     }
     runs
 }
@@ -651,7 +750,7 @@ fn keep_lines_together(
     runs: &[Option<(usize, usize)>],
     index: usize,
     column_start: usize,
-    context: FragmentationContext,
+    (orphans, widows): (usize, usize),
 ) -> Option<usize> {
     let (run_start, run_end) = runs.get(index).copied().flatten()?;
     if run_start == index {
@@ -659,10 +758,10 @@ fn keep_lines_together(
     }
     let mut start = index;
     let after = run_end - start;
-    if after < context.widows {
-        start = start.saturating_sub(context.widows - after).max(run_start);
+    if after < widows {
+        start = start.saturating_sub(widows - after).max(run_start);
     }
-    if start.saturating_sub(run_start.max(column_start)) < context.orphans {
+    if start.saturating_sub(run_start.max(column_start)) < orphans {
         start = run_start;
     }
     Some(start)
@@ -690,8 +789,80 @@ fn move_blocks(
     }
     for (index, pieces) in &placed.pieces {
         if let Some(node) = units[*index].0.block() {
-            let _ = record_pieces(tree, node, pieces, context);
+            let _ = record_pieces(tree, node, pieces, &[], context);
         }
+    }
+    move_line_blocks(tree, units, placed, context);
+}
+
+/// Move each block that holds only lines to the column of its first line, and
+/// give its lines the columns `placed` gives them, from its content box: those
+/// of a run past its first column at the offset of its column, and as far
+/// down as the run starts there. A block whose lines reach more than one
+/// column has a piece in each, from the top of the block or of its first line
+/// there to the end of its last line there or of the block.
+fn move_line_blocks(
+    tree: &mut LayoutSession<'_>,
+    units: &[(Unit, f32, f32)],
+    placed: &PlacedUnits,
+    context: FragmentationContext,
+) {
+    let mut runs = placed.inner.iter();
+    let mut index = 0;
+    while index < units.len() {
+        let Unit::Inner { node, offset, .. } = units[index].0 else {
+            index += 1;
+            continue;
+        };
+        let stop = (index..units.len())
+            .find(|&at| !matches!(units[at].0, Unit::Inner { node: other, .. } if other == node))
+            .unwrap_or(units.len());
+        let (column, dy) = placed.columns[index];
+        let mut layout = tree.nodes[node].layout;
+        layout.location.x += context.column_offset_x(column);
+        layout.location.y += dy;
+        tree.set_unrounded_layout(NodeId::from(node), &layout);
+        // The pieces of an earlier layout no longer apply.
+        tree.fragment_tree.retire_previous_roots(node);
+        // The top of the block's content box, in that of the container.
+        let content_top = units[index].1 - offset + dy;
+        let origin_x = context.column_offset_x(column);
+        let Some((_, fragments)) = runs.next() else {
+            return;
+        };
+        let mut pieces: Vec<Piece> = Vec::new();
+        for (at, (&(_, top, bottom), &(column, dy))) in units[index..stop]
+            .iter()
+            .zip(&placed.columns[index..stop])
+            .enumerate()
+        {
+            let (top, bottom) = (top + dy, bottom + dy);
+            match pieces.last_mut() {
+                Some(piece) if piece.0 == column => piece.2 = bottom - piece.1,
+                _ => pieces.push((
+                    column,
+                    if at == 0 { content_top } else { top },
+                    bottom - top,
+                )),
+            }
+        }
+        index = stop;
+        if pieces.len() < 2 {
+            continue;
+        }
+        let fragments: Vec<_> = fragments
+            .iter()
+            .map(|fragment| MulticolTextFragment {
+                x: fragment.x - origin_x,
+                y: fragment.y - content_top,
+                ..*fragment
+            })
+            .collect();
+        if let Some(root) = tree.nodes[node].ifc.as_mut() {
+            root.multicol_fragments = Some(fragments.clone());
+            root.multicol_fragment_origins_recorded = true;
+        }
+        let _ = record_pieces(tree, node, &pieces, &fragments, context);
     }
 }
 
@@ -704,6 +875,7 @@ fn record_pieces(
     tree: &mut LayoutSession<'_>,
     node: usize,
     pieces: &[Piece],
+    lines: &[MulticolTextFragment],
     context: FragmentationContext,
 ) -> Option<()> {
     let (first_column, first_y, _) = *pieces.first()?;
@@ -732,8 +904,9 @@ fn record_pieces(
             fragmentainer_clip: sliced.then(|| paragraph_group::inline_open_clip(rect)),
             fragment_index: index,
             fragment_count: pieces.len(),
-            line_start: None,
-            line_end: None,
+            // A piece of a block of lines paints the ones its column holds.
+            line_start: lines.get(index).map(|run| run.line_start),
+            line_end: lines.get(index).map(|run| run.line_end),
         };
         tree.fragment_tree.try_push(fragment)?;
         taken += height;
