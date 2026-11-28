@@ -575,6 +575,62 @@ fn a_flex_or_grid_container_keeps_only_a_size_its_content_fills() {
 }
 
 #[test]
+fn a_grid_keeps_its_height_against_a_keyword_maximum_only_with_a_row_that_stretches() {
+    // `align-content: normal` stretches only the rows with an `auto` maximum,
+    // explicit or implicit, to fill the stated height; other rows leave the
+    // grid the height of its tracks.
+    #[rustfmt::skip]
+    assert_bodies(&[
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:min-content;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:min-content;min-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:max-content;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:max-content;min-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-auto-rows:min-content;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-auto-rows:min-content;min-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:auto;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:auto;min-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:minmax(0,auto);max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:minmax(0,auto);min-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:fit-content(50px);max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:fit-content(50px);min-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:minmax(min-content,max-content);max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:minmax(min-content,max-content);min-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:auto min-content;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:auto min-content;min-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:30px;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:30px;max-height:min-content'></div>", (8.0, 8.0, 20.0, 30.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:30px 30px;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 60.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:30px 30px;max-height:min-content'></div>", (8.0, 8.0, 20.0, 60.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-auto-rows:30px;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 60.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-auto-rows:30px;max-height:min-content'></div>", (8.0, 8.0, 20.0, 0.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-auto-rows:max-content;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-auto-rows:max-content;max-height:min-content'></div>", (8.0, 8.0, 20.0, 0.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-auto-rows:auto;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-auto-rows:auto;max-height:min-content'></div>", (8.0, 8.0, 20.0, 0.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-auto-rows:minmax(0,auto);max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-auto-rows:minmax(0,auto);max-height:min-content'></div>", (8.0, 8.0, 20.0, 0.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-auto-rows:fit-content(50px);max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-auto-rows:fit-content(50px);max-height:min-content'></div>", (8.0, 8.0, 20.0, 0.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:min-content;grid-auto-rows:min-content;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:min-content;grid-auto-rows:min-content;max-height:min-content'></div>", (8.0, 8.0, 20.0, 0.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:min-content min-content;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:min-content min-content;max-height:min-content'></div>", (8.0, 8.0, 20.0, 0.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-auto-rows:minmax(min-content,max-content);max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-auto-rows:minmax(min-content,max-content);max-height:min-content'></div>", (8.0, 8.0, 20.0, 0.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:min-content;align-content:start;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:min-content;align-content:start;max-height:min-content'></div>", (8.0, 8.0, 20.0, 0.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:auto;align-content:start;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:auto;align-content:start;max-height:min-content'></div>", (8.0, 8.0, 20.0, 0.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;align-content:start;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;align-content:start;max-height:min-content'></div>", (8.0, 8.0, 20.0, 0.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:repeat(2,min-content);max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:repeat(1,auto);max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:min-content;grid-template-columns:repeat(2,10px);max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 10.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:min-content;grid-template-columns:repeat(auto-fill,10px);max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 10.0)),
+    ]);
+}
+
+#[test]
 fn a_grid_grows_to_its_content_for_a_keyword_block_minimum() {
     // A keyword `max-width` leaves the stated block size.
     #[rustfmt::skip]

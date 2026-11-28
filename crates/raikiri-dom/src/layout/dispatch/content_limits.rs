@@ -671,9 +671,10 @@ fn vertical_block_bounds(
 /// container at that size. A flex container whose main axis is its inline axis
 /// stretches the items that align with `stretch` or `normal` to fill its single
 /// line, and so keeps the size against both keywords when one of its items
-/// does. A grid container whose rows all size to their content stretches them
-/// to fill the size under `align-content: normal` or `stretch`, but still grows
-/// to the size of its content, and so keeps the size against a maximum.
+/// does. A grid container stretches its rows with an `auto` maximum to fill
+/// the size under `align-content: normal` or `stretch`, but still grows to the
+/// size of its content, and so keeps the size against a maximum when it has
+/// such a row.
 fn keeps_definite_size(tree: &LayoutSession<'_>, idx: usize, height: bool) -> [bool; 2] {
     use raikiri_layout_style::values::AlignContentKeyword;
     if !has_definite_size(tree, idx, height) {
@@ -685,12 +686,12 @@ fn keeps_definite_size(tree: &LayoutSession<'_>, idx: usize, height: bool) -> [b
         .map(usize::from)
         .filter(|&child| !tree.nodes[child].is_display_none() && !is_oof_box(tree, child));
     if tree.nodes[idx].layout_display() != Display::Flex {
-        let rows_stretch = matches!(
-            style.align_content().keyword,
-            AlignContentKeyword::Normal | AlignContentKeyword::Stretch
-        ) && crate::layout::taffy_adapter::rows_size_to_content(&style);
-        let mut items = items;
-        return [false, rows_stretch && items.next().is_some()];
+        let rows_stretch =
+            matches!(
+                style.align_content().keyword,
+                AlignContentKeyword::Normal | AlignContentKeyword::Stretch
+            ) && crate::layout::taffy_adapter::some_row_stretches(&style, items.count());
+        return [false, rows_stretch];
     }
     if !style.flex_direction_is_row() || style.flex_wraps() {
         return [false; 2];

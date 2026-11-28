@@ -190,3 +190,54 @@ impl RowSizing {
         })
     }
 }
+
+/// Whether some row of the grid laid out with `style` that holds one of its
+/// `items` in-flow items has an `auto` maximum track size, which
+/// `align-content: normal` and `stretch` grow to fill a definite height (CSS
+/// Grid 1 §12.8). The explicit rows are all there; implicit rows are counted
+/// as there when the items outnumber the explicit cells, as automatic
+/// placement puts them, which an automatic repetition never lets them do.
+pub(crate) fn some_row_stretches(style: &LayoutStyleView<'_>, items: usize) -> bool {
+    let style = TaffyStyle::new(*style);
+    let stretches = |track: TrackSizingFunction| track.max.is_auto();
+    let rows = style
+        .grid_template_rows()
+        .into_iter()
+        .flatten()
+        .map(|component| match component {
+            GenericGridTemplateComponent::Single(_) => 1,
+            GenericGridTemplateComponent::Repeat(repeat) => repeat_len(&repeat),
+        })
+        .fold(0, usize::saturating_add);
+    let columns = style
+        .grid_template_columns()
+        .into_iter()
+        .flatten()
+        .map(|component| match component {
+            GenericGridTemplateComponent::Single(_) => 1,
+            GenericGridTemplateComponent::Repeat(repeat) => repeat_len(&repeat),
+        })
+        .fold(0, usize::saturating_add);
+    let explicit_cells = rows.saturating_mul(columns.max(1));
+    let explicit = style.grid_template_rows().is_some_and(|mut components| {
+        components.any(|component| match component {
+            GenericGridTemplateComponent::Single(track) => stretches(track),
+            GenericGridTemplateComponent::Repeat(repetition) => repetition.tracks().any(stretches),
+        })
+    });
+    // Without `grid-auto-rows`, implicit rows are `auto`.
+    let implicit = || {
+        let mut rows = style.grid_auto_rows().peekable();
+        rows.peek().is_none() || rows.any(stretches)
+    };
+    explicit || items > explicit_cells && implicit()
+}
+
+/// The tracks a repetition gives. An automatic one repeats to fill the grid,
+/// so it is taken to give as many as the items need.
+fn repeat_len<R: GenericRepetition>(repeat: &R) -> usize {
+    match repeat.count() {
+        RepetitionCount::Count(count) => repeat.tracks().len() * usize::from(count),
+        RepetitionCount::AutoFill | RepetitionCount::AutoFit => usize::MAX,
+    }
+}
