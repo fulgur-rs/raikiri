@@ -177,7 +177,7 @@ pub(super) fn is_sized_leaf(tree: &LayoutSession<'_>, child: usize) -> bool {
 pub(super) fn is_sized_leaf_below_floats(tree: &LayoutSession<'_>, child: usize) -> bool {
     let style = style_of(tree, child);
     layout_node(tree, child).display() == DisplayValue::Block
-        && is_plain_box_but_clearance(tree, child, false, false)
+        && is_plain_box_but_clearance(tree, child, false, false, false)
         && !has_rendered_content(tree, child, false)
         && has_block_size(&style)
         && block_margins(&style).is_some()
@@ -493,28 +493,30 @@ pub(super) fn is_plain_box_apart_from_display(
     allow_lines: bool,
 ) -> bool {
     style_of(tree, child).clear() == Clear::None
-        && is_plain_box_but_clearance(tree, child, allow_lines, false)
+        && is_plain_box_but_clearance(tree, child, allow_lines, false, false)
 }
 
 /// [`is_plain_box_apart_from_display`] for a box that holds no lines and may
-/// force a column break before or after itself, for a caller that starts a
-/// column there.
-pub(super) fn is_plain_box_apart_from_display_and_breaks(
+/// avoid a column break before or after itself, for a caller that keeps a
+/// column end clear of it. With `breaks`, the box may force one too.
+pub(super) fn is_plain_box_apart_from_display_and_avoids(
     tree: &LayoutSession<'_>,
     child: usize,
+    breaks: bool,
 ) -> bool {
     style_of(tree, child).clear() == Clear::None
-        && is_plain_box_but_clearance(tree, child, false, true)
+        && is_plain_box_but_clearance(tree, child, false, breaks, true)
 }
 
 /// [`is_plain_box_apart_from_display`] for a box that may clear floats, for
 /// a caller that places it below them. With `breaks`, the box may force a
-/// column break before or after itself.
+/// column break before or after itself, and with `avoids`, avoid one.
 fn is_plain_box_but_clearance(
     tree: &LayoutSession<'_>,
     child: usize,
     allow_lines: bool,
     breaks: bool,
+    avoids: bool,
 ) -> bool {
     let node = layout_node(tree, child);
     let style = style_of(tree, child);
@@ -538,7 +540,12 @@ fn is_plain_box_but_clearance(
         || holds_legend(tree, child)
         || [node.break_before, node.break_after]
             .into_iter()
-            .any(|value| sets_break_in_columns(value) && !(breaks && value == BreakBetween::Column))
+            .any(|value| {
+                sets_break_in_columns(value)
+                    && !(breaks && value == BreakBetween::Column)
+                    && !(avoids
+                        && matches!(value, BreakBetween::Avoid | BreakBetween::AvoidColumn))
+            })
         || node.has_before_or_after_content
         || node.multicol.is_some()
         || node.ifc.is_some() && !allow_lines

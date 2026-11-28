@@ -141,6 +141,10 @@ fn is_transparent_wrapper(tree: &LayoutSession<'_>, id: usize) -> bool {
         || node.roots_block_context()
         || node.layout_position() != Position::Static
         || node.paints_background_color
+        // A break the wrapper forces or avoids around itself would go with
+        // its children, which take its place.
+        || sets_break_in_columns(node.break_before)
+        || sets_break_in_columns(node.break_after)
         || !paragraph_group::is_flow_wrapper(tree, id)
         || !paragraph_group::height_follows_content(tree, id)
     {

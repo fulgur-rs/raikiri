@@ -6,8 +6,8 @@
 //!
 //! The expected border boxes are the ones Chromium computes for the same
 //! markup in an 800px by 600px viewport, with no margin on the body and 10px
-//! Ahem text. `o` is the container; the wrappers `c`, `w` and `x` are not
-//! checked. A box that breaks lists one border box per column it is in, in
+//! Ahem text. `o` is the container; the wrappers `c`, `v`, `w`, `w2` and
+//! `x` are not checked. A box that breaks lists one border box per column it is in, in
 //! column order.
 
 use raikiri_html::{
@@ -510,6 +510,155 @@ const CASES: &[Case] = &[
             ("b9", (600.0, 0.0, 100.0, 10.0)),
             ("b10", (700.0, 0.0, 100.0, 10.0)),
             ("b11", (700.0, 10.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "wrapper_avoids_a_break_before_itself",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px\"><div id=a>aa</div><div id=b>bb</div><div id=w style='break-before:avoid'><div id=k>kk</div><div id=d>dd</div></div><div id=e>ee</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 20.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 0.0, 100.0, 10.0)),
+            ("k", (100.0, 10.0, 100.0, 10.0)),
+            ("d", (200.0, 0.0, 100.0, 10.0)),
+            ("e", (200.0, 10.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "wrapper_avoids_a_break_after_itself",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px\"><div id=a>aa</div><div id=w style='break-after:avoid'><div id=b>bb</div><div id=k>kk</div></div><div id=d>dd</div><div id=e>ee</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 20.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (0.0, 10.0, 100.0, 10.0)),
+            ("k", (100.0, 0.0, 100.0, 10.0)),
+            ("d", (100.0, 10.0, 100.0, 10.0)),
+            ("e", (200.0, 0.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "wrapper_avoids_a_column_break_before_itself",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px\"><div id=a>aa</div><div id=b>bb</div><div id=w style='break-before:avoid-column'><div id=k>kk</div><div id=d>dd</div></div><div id=e>ee</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 20.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 0.0, 100.0, 10.0)),
+            ("k", (100.0, 10.0, 100.0, 10.0)),
+            ("d", (200.0, 0.0, 100.0, 10.0)),
+            ("e", (200.0, 10.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "wrapper_avoid_in_fill_auto_columns",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px;height:20px;column-fill:auto\"><div id=a>aa</div><div id=b>bb</div><div id=w style='break-before:avoid'><div id=k>kk</div><div id=d>dd</div></div><div id=e>ee</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 20.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 0.0, 100.0, 10.0)),
+            ("k", (100.0, 10.0, 100.0, 10.0)),
+            ("d", (200.0, 0.0, 100.0, 10.0)),
+            ("e", (200.0, 10.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "nested_wrapper_avoids_a_break_before_itself",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px\"><div id=a>aa</div><div id=b>bb</div><div id=w><div id=v style='break-before:avoid'><div id=k>kk</div><div id=d>dd</div></div></div><div id=e>ee</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 20.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 0.0, 100.0, 10.0)),
+            ("k", (100.0, 10.0, 100.0, 10.0)),
+            ("d", (200.0, 0.0, 100.0, 10.0)),
+            ("e", (200.0, 10.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "padded_wrapper_avoids_a_break_before_itself",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px\"><div id=a>aa</div><div id=w style='break-before:avoid;padding-top:5px'><div id=b>bb</div><div id=k>kk</div></div><div id=d>dd</div><div id=e>ee</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 25.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (0.0, 15.0, 100.0, 10.0)),
+            ("k", (100.0, 0.0, 100.0, 10.0)),
+            ("d", (100.0, 10.0, 100.0, 10.0)),
+            ("e", (200.0, 0.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "wrappers_avoid_the_break_between_them",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px\"><div id=a>aa</div><div id=w style='break-after:avoid'><div id=b>bb</div></div><div id=w2 style='break-before:avoid'><div id=k>kk</div></div><div id=d>dd</div><div id=e>ee</div><div id=f>ff</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 30.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (0.0, 10.0, 100.0, 10.0)),
+            ("k", (0.0, 20.0, 100.0, 10.0)),
+            ("d", (100.0, 0.0, 100.0, 10.0)),
+            ("e", (100.0, 10.0, 100.0, 10.0)),
+            ("f", (100.0, 20.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "wrapper_of_two_blocks_avoids_a_break_before_itself",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px\"><div id=a>aa</div><div id=b>bb</div><div id=c style='break-before:avoid'><div id=k>kk</div><div id=d>dd</div></div><div id=e>ee</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 20.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 0.0, 100.0, 10.0)),
+            ("k", (100.0, 10.0, 100.0, 10.0)),
+            ("d", (200.0, 0.0, 100.0, 10.0)),
+            ("e", (200.0, 10.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "wrapper_avoids_a_break_after_itself_before_another_wrapper",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px\"><div id=a>aa</div><div id=w style='break-after:avoid'><div id=b>bb</div></div><div id=w2><div id=k>kk</div></div><div id=d>dd</div><div id=e>ee</div><div id=f>ff</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 30.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (0.0, 10.0, 100.0, 10.0)),
+            ("k", (0.0, 20.0, 100.0, 10.0)),
+            ("d", (100.0, 0.0, 100.0, 10.0)),
+            ("e", (100.0, 10.0, 100.0, 10.0)),
+            ("f", (100.0, 20.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "box_avoids_a_break_after_itself_before_a_wrapper",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px\"><div id=a>aa</div><div id=b style='break-after:avoid'>bb</div><div id=w><div id=k>kk</div><div id=d>dd</div></div><div id=e>ee</div><div id=f>ff</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 30.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (0.0, 10.0, 100.0, 10.0)),
+            ("k", (0.0, 20.0, 100.0, 10.0)),
+            ("d", (100.0, 0.0, 100.0, 10.0)),
+            ("e", (100.0, 10.0, 100.0, 10.0)),
+            ("f", (100.0, 20.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "nested_wrapper_avoids_a_break_after_itself",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px\"><div id=a>aa</div><div id=w><div id=b>bb</div><div id=v style='break-after:avoid'><div id=k>kk</div></div></div><div id=d>dd</div><div id=e>ee</div><div id=f>ff</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 20.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (0.0, 10.0, 100.0, 10.0)),
+            ("k", (100.0, 0.0, 100.0, 10.0)),
+            ("d", (100.0, 10.0, 100.0, 10.0)),
+            ("e", (200.0, 0.0, 100.0, 10.0)),
+            ("f", (200.0, 10.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "wrapper_at_the_start_avoids_no_break",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px\"><div id=w style='break-before:avoid'><div id=a>aa</div><div id=b>bb</div></div><div id=k>kk</div><div id=d>dd</div><div id=e>ee</div><div id=f>ff</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 20.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (0.0, 10.0, 100.0, 10.0)),
+            ("k", (100.0, 0.0, 100.0, 10.0)),
+            ("d", (100.0, 10.0, 100.0, 10.0)),
+            ("e", (200.0, 0.0, 100.0, 10.0)),
+            ("f", (200.0, 10.0, 100.0, 10.0)),
         ],
     },
 ];
