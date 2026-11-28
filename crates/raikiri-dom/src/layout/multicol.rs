@@ -142,6 +142,7 @@ fn is_transparent_wrapper(tree: &LayoutSession<'_>, id: usize) -> bool {
         || node.layout_position() != Position::Static
         || node.paints_background_color
         || !paragraph_group::is_flow_wrapper(tree, id)
+        || !paragraph_group::height_follows_content(tree, id)
     {
         return false;
     }
@@ -2652,15 +2653,18 @@ fn record_wrapped_fragments(
     group: &paragraph_group::Group,
     entry: usize,
     wrapper_fragment: usize,
+    wrapper_pieces: WrapperPieces,
     context: FragmentationContext,
 ) -> Option<()> {
-    let mut fragments = HashMap::new();
-    fragments.insert(
+    // The pieces of each wrapper by column, which hold what it holds there.
+    let mut homes = HashMap::new();
+    homes.insert(
         tree.fragment_tree.fragments[wrapper_fragment].node_id,
-        wrapper_fragment,
+        wrapper_pieces,
     );
     for wrapped in group.wrapped(entry) {
-        let parent_fragment = *fragments.get(&wrapped.parent_node)?;
+        let pieces = homes.get(&wrapped.parent_node)?;
+        let parent_fragment = pieces.first;
         let layout = tree.nodes[wrapped.node].layout;
         let lines = tree.nodes[wrapped.node]
             .ifc
@@ -2672,37 +2676,42 @@ fn record_wrapped_fragments(
             lines.is_none() && wrapped.placement.sliced && wrapped.placement.fragments.len() > 1;
         if lines.is_none() && !sliced_leaf {
             let placement = &wrapped.placement;
-            let fragment = tree
-                .fragment_tree
-                .try_push(crate::fragment::LayoutFragment {
-                    node_id: wrapped.node,
-                    parent: Some(parent_fragment),
-                    fragmentainer: wrapped.placement.first_column,
-                    rect: crate::fragment::FragmentRect {
-                        x: layout.location.x,
-                        y: layout.location.y,
-                        width: layout.size.width,
-                        height: layout.size.height,
-                    },
-                    fragmentainer_clip: None,
-                    fragment_index: 0,
-                    fragment_count: 1,
-                    line_start: None,
-                    line_end: None,
-                })?;
-            fragments.insert(wrapped.node, fragment);
-            let pieces = wrapped.end.map_or(Some(()), |end| {
-                push_wrapper_pieces(
-                    tree,
-                    wrapped.node,
-                    fragment,
-                    placement,
-                    end,
-                    group.height,
-                    context,
-                )
-            });
-            pieces?;
+            let mut piece = crate::fragment::LayoutFragment {
+                node_id: wrapped.node,
+                parent: Some(parent_fragment),
+                fragmentainer: wrapped.placement.first_column,
+                rect: crate::fragment::FragmentRect {
+                    x: layout.location.x,
+                    y: layout.location.y,
+                    width: layout.size.width,
+                    height: layout.size.height,
+                },
+                fragmentainer_clip: None,
+                fragment_index: 0,
+                fragment_count: 1,
+                line_start: None,
+                line_end: None,
+            };
+            pieces.home(&mut piece);
+            let fragment = tree.fragment_tree.try_push(piece)?;
+            let own = match wrapped.end {
+                Some(end) => {
+                    let outer = homes.get(&wrapped.parent_node)?.clone();
+                    let pieces = push_wrapper_pieces(
+                        tree,
+                        wrapped.node,
+                        fragment,
+                        placement,
+                        end,
+                        group.height,
+                        context,
+                        Some(&outer),
+                    );
+                    pieces?
+                }
+                None => WrapperPieces::single(fragment),
+            };
+            homes.insert(wrapped.node, own);
             continue;
         }
         let extents: Vec<(f32, f32)> = lines.map_or_else(Vec::new, |lines| {
@@ -2794,18 +2803,19 @@ fn record_wrapped_fragments(
                     height: bottom - top,
                 })
             });
-            tree.fragment_tree
-                .try_push(crate::fragment::LayoutFragment {
-                    node_id: wrapped.node,
-                    parent: Some(parent_fragment),
-                    fragmentainer: range.fragmentainer,
-                    rect: lineless::sliced_rect(rect, whole_box.map(|whole| (taken, whole))),
-                    fragmentainer_clip: clip,
-                    fragment_index: index,
-                    fragment_count: count,
-                    line_start: holds_lines.then_some(range.line_start),
-                    line_end: holds_lines.then_some(range.line_end),
-                })?;
+            let mut piece = crate::fragment::LayoutFragment {
+                node_id: wrapped.node,
+                parent: Some(parent_fragment),
+                fragmentainer: range.fragmentainer,
+                rect: lineless::sliced_rect(rect, whole_box.map(|whole| (taken, whole))),
+                fragmentainer_clip: clip,
+                fragment_index: index,
+                fragment_count: count,
+                line_start: holds_lines.then_some(range.line_start),
+                line_end: holds_lines.then_some(range.line_end),
+            };
+            pieces.home(&mut piece);
+            tree.fragment_tree.try_push(piece)?;
             taken += height;
         }
     }
@@ -2823,6 +2833,7 @@ fn record_wrapped_fragments(
 /// its block-axis border and padding paints whole in each piece, moved up by
 /// what the earlier pieces took, and the column clips it. `None` when the
 /// fragments run out.
+#[allow(clippy::too_many_arguments)]
 fn push_wrapper_pieces(
     tree: &mut LayoutSession<'_>,
     wrapper: usize,
@@ -2831,10 +2842,16 @@ fn push_wrapper_pieces(
     end: (usize, f32),
     column_height: f32,
     context: FragmentationContext,
-) -> Option<()> {
+    outer: Option<&WrapperPieces>,
+) -> Option<WrapperPieces> {
     let start = (placement.first_column, placement.first_y);
-    if !paragraph_group::paints_pieces(tree, wrapper) || end.0 <= start.0 {
-        return Some(());
+    // A wrapper inside one that has pieces gets pieces too, even when it
+    // paints nothing, so that what it holds in each column sits in the
+    // outer wrapper's piece there, which paints before it.
+    let inside_pieces = outer.is_some_and(|outer| !outer.by_column.is_empty());
+    let mut own = WrapperPieces::single(first_fragment);
+    if !(paragraph_group::paints_pieces(tree, wrapper) || inside_pieces) || end.0 <= start.0 {
+        return Some(own);
     }
     let first = tree.fragment_tree.fragments[first_fragment];
     let column_top = first.rect.y - start.1;
@@ -2900,11 +2917,69 @@ fn push_wrapper_pieces(
         if index == 0 {
             tree.fragment_tree.fragments[first_fragment] = fragment;
         } else {
-            tree.fragment_tree.try_push(fragment)?;
+            // What the wrapper holds in this column sits in this piece,
+            // moved by as much as the piece is from the first.
+            let offset = (
+                fragment.rect.x - first.rect.x,
+                fragment.rect.y - first.rect.y,
+            );
+            let mut fragment = fragment;
+            if let Some(outer) = outer {
+                outer.rehome(&mut fragment, first.fragmentainer);
+            }
+            let id = tree.fragment_tree.try_push(fragment)?;
+            own.by_column.insert(column, (id, offset));
         }
         taken += height;
     }
-    Some(())
+    Some(own)
+}
+
+/// The pieces of a wrapper whose boxes joined the flow: its first, which
+/// holds the boxes of its first column, and one for each later column its
+/// border box reaches, with how far each is from the first in the space of
+/// the first's parent. Each column's piece holds what the wrapper holds in
+/// that column, so it paints over the piece's background and borders, as
+/// the lines in a later column of a painted wrapper must.
+#[derive(Clone)]
+struct WrapperPieces {
+    first: usize,
+    by_column: HashMap<usize, (usize, (f32, f32))>,
+}
+
+impl WrapperPieces {
+    fn single(first: usize) -> Self {
+        Self {
+            first,
+            by_column: HashMap::new(),
+        }
+    }
+
+    /// Put `fragment`, which is placed in the space of the first piece, in
+    /// the piece of its column, if the wrapper has one there.
+    fn home(&self, fragment: &mut crate::fragment::LayoutFragment) {
+        if let Some(&(id, (dx, dy))) = self.by_column.get(&fragment.fragmentainer) {
+            fragment.parent = Some(id);
+            fragment.translate(-dx, -dy);
+        }
+    }
+
+    /// Put `fragment`, a piece of a wrapper inside this one whose first
+    /// piece is in `first_column`, and which is placed in the space of the
+    /// parent of that first piece, in the piece of this wrapper in its own
+    /// column.
+    fn rehome(&self, fragment: &mut crate::fragment::LayoutFragment, first_column: usize) {
+        let from = self
+            .by_column
+            .get(&first_column)
+            .map_or((0.0, 0.0), |&(_, offset)| offset);
+        let (parent, to) = self
+            .by_column
+            .get(&fragment.fragmentainer)
+            .map_or((self.first, (0.0, 0.0)), |&(id, offset)| (id, offset));
+        fragment.parent = Some(parent);
+        fragment.translate(from.0 - to.0, from.1 - to.1);
+    }
 }
 
 /// Whether a column end broke between the lines of the sliced box placed at
@@ -4900,12 +4975,14 @@ fn layout_column_group(
         // pieces in the columns the flow gave them.
         let wrapped = match group_balance.as_ref() {
             Some(group) if planned.is_some() && group.wraps(local_order) => {
-                if record_wrapped_fragments(tree, group, local_order, child_fragment, context)
-                    .is_none()
-                    || group
-                        .placement_of(local_order)
-                        .zip(group.wrapper_end(local_order))
-                        .is_some_and(|(placement, end)| {
+                // The pieces come first, so that the boxes in each column
+                // sit in the piece there.
+                let pieces = group
+                    .placement_of(local_order)
+                    .zip(group.wrapper_end(local_order))
+                    .map_or(
+                        Some(WrapperPieces::single(child_fragment)),
+                        |(placement, end)| {
                             push_wrapper_pieces(
                                 tree,
                                 child,
@@ -4914,9 +4991,22 @@ fn layout_column_group(
                                 end,
                                 group.height,
                                 context,
+                                None,
                             )
-                            .is_none()
-                        })
+                        },
+                    );
+                if pieces
+                    .and_then(|pieces| {
+                        record_wrapped_fragments(
+                            tree,
+                            group,
+                            local_order,
+                            child_fragment,
+                            pieces,
+                            context,
+                        )
+                    })
+                    .is_none()
                 {
                     return fallback_height;
                 }

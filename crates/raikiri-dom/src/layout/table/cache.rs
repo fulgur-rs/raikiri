@@ -140,21 +140,23 @@ pub(super) fn prepared_borders(
         let state = borders.as_mut().expect("collapsed border state");
         resolve_centered_block_borders(doc, state, grid, index, table_idx, parent_width);
     }
+    let collapsed_cols = collapsed_columns(doc, table_idx, grid.n_cols);
     // A vertical table stacks its columns along the block axis, which the
-    // collapse rules here do not model.
-    let collapsed_cols = if vertical_writing {
+    // collapsed border rules here do not model: its borders resolve as if
+    // every column showed.
+    let border_cols = if vertical_writing {
         vec![false; usize::from(grid.n_cols)]
     } else {
-        collapsed_columns(doc, table_idx, grid.n_cols)
+        collapsed_cols.clone()
     };
-    let columns_collapse = collapsed_cols.contains(&true);
+    let columns_collapse = border_cols.contains(&true);
     // Collapsed rows and columns take no part in border conflict resolution:
     // the tracks around them, and the table edge, resolve against each other.
     let shown = (cell_index.is_some() && (columns_collapse || collapsed_rows.contains(&true)))
         .then(|| {
             without_collapsed_columns(
                 &without_collapsed_rows(grid, &collapsed_rows),
-                &collapsed_cols,
+                &border_cols,
                 true,
             )
         });
@@ -240,8 +242,8 @@ pub(super) fn prepared_borders(
                 &table_border,
                 parent_width,
             );
-            let kept_cols: Vec<usize> = (0..collapsed_cols.len())
-                .filter(|&column| !collapsed_cols[column])
+            let kept_cols: Vec<usize> = (0..border_cols.len())
+                .filter(|&column| !border_cols[column])
                 .collect();
             let mut row_overlaps = vec![0.0; grid.rows.len() - 1];
             for (line, rows) in lines.row_overlaps.iter().zip(kept_rows.windows(2)) {

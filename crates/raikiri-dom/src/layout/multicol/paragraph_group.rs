@@ -85,7 +85,7 @@ impl Group {
                 })
                 .unwrap_or(start)
         };
-        let (end_column, end_y) = Self::border_box_end(end);
+        let (end_column, end_y) = Self::border_box_end(end, flow.entries[close].4);
         // A wrapper that runs into a later column reaches the end of the ones
         // it leaves, as a paragraph broken there does.
         // One whose padding below went whole to a later column ends in the
@@ -130,8 +130,13 @@ impl Group {
     /// wrapper ends, from `end`, the placement of the entry that ends it: where
     /// the padding or border below its last box does, or where that box does
     /// when it has none.
-    fn border_box_end(end: &Placement) -> (usize, f32) {
-        if end.sliced {
+    fn border_box_end(end: &Placement, margin_bottom: f32) -> (usize, f32) {
+        if end.sliced && end.last_column != end.first_column {
+            // The end of a wrapper that a column end cuts, as the room that
+            // its height leaves below its boxes is, ends in the last column
+            // its pieces reach, above the margin below it.
+            (end.last_column, end.last_y - margin_bottom)
+        } else if end.sliced {
             (end.last_column, end.first_y + end.first_height)
         } else {
             (end.entry_column, end.entry_y)
@@ -150,7 +155,10 @@ impl Group {
         let Role::Open(close) = flow.roles[index] else {
             return None;
         };
-        Some(Self::border_box_end(self.placements.get(close)?.as_ref()?))
+        Some(Self::border_box_end(
+            self.placements.get(close)?.as_ref()?,
+            flow.entries[close].4,
+        ))
     }
 
     /// The boxes and wrappers inside the wrapper that the `entry`th entry the
@@ -241,6 +249,10 @@ pub(super) struct Flow {
     /// For each entry, how far right of the container's column the content
     /// box of the wrapper holding it starts.
     insets: Vec<f32>,
+    /// For the entry that ends a wrapper with a height of its own (see
+    /// [`takes_height_of_its_own`]), that height; `None` for every other
+    /// entry.
+    tails: Vec<Option<OwnHeight>>,
 }
 
 /// How deep wrappers may nest in a flow. Deeper ones keep the other
@@ -256,6 +268,7 @@ impl Flow {
             parents: vec![None; entries.len()],
             direct: (0..entries.len()).collect(),
             insets: vec![0.0; entries.len()],
+            tails: vec![None; entries.len()],
         }
     }
 
@@ -274,6 +287,7 @@ impl Flow {
             parents: Vec::with_capacity(entries.len()),
             direct: Vec::with_capacity(entries.len()),
             insets: Vec::with_capacity(entries.len()),
+            tails: Vec::with_capacity(entries.len()),
         };
         for entry in entries {
             flow.direct.push(flow.entries.len());
@@ -302,11 +316,15 @@ impl Flow {
         // one row goes to one column as a wrapper.
         // The page stream, which passes no `pieces`, starts a column at a
         // forced break before or after a wrapper.
-        if !flow_wrapper(tree, id, !pieces)
-            || parent.is_none()
+        let wrapper = flow_wrapper(tree, id, !pieces)
+            && !(parent.is_none()
                 && layout_node(tree, id).display() == DisplayValue::FlowRoot
-                && holds_one_row_of_lines(tree, id)
-        {
+                && holds_one_row_of_lines(tree, id));
+        // A wrapper with a height of its own that the flow cannot model
+        // stands in it as a box, as it did before such wrappers joined it.
+        let own = (wrapper && !height_follows_content(tree, id))
+            .then(|| own_height(tree, id, &entry.2, self.entries.len()));
+        if !wrapper || own.is_some_and(|own| own.is_none()) {
             // Inside a wrapper, the flow takes paragraphs whose pieces hold
             // nothing but lines, between no padding or border, sized boxes
             // with no lines, and white space; the pieces are recorded without
@@ -320,6 +338,7 @@ impl Flow {
             self.roles.push(Role::Box);
             self.parents.push(parent);
             self.insets.push(inset);
+            self.tails.push(None);
             return Some(());
         }
         if depth >= MAX_WRAPPER_DEPTH {
@@ -332,6 +351,7 @@ impl Flow {
         self.roles.push(Role::Open(open));
         self.parents.push(parent);
         self.insets.push(inset);
+        self.tails.push(None);
         let content_inset = inset + layout.margin.left + layout.border.left + layout.padding.left;
         for child in flow_children(tree, id) {
             let node = &tree.nodes[child];
@@ -357,6 +377,7 @@ impl Flow {
             )?;
         }
         let close = self.entries.len();
+        let tail = own.flatten();
         self.roles[open] = Role::Open(close);
         self.entries.push((
             id,
@@ -369,8 +390,132 @@ impl Flow {
         self.roles.push(Role::Close);
         self.parents.push(parent);
         self.insets.push(inset);
+        self.tails.push(tail);
         Some(())
     }
+}
+
+/// The height of the wrapper `id`, laid out as `layout`, whose start will be
+/// the entry `open` of the flow, as the columns take it.
+///
+/// A box with a height of its own keeps the bottom margin of its last box
+/// apart from its own (CSS 2, 8.3.1), so that margin is part of its content.
+/// A `min-height` or `max-height` that does not bind, or a height that
+/// computes to `auto`, leaves the wrapper as tall as its boxes, which collapse
+/// their margins through it as those of a wrapper with no height of its own
+/// do (Chromium; see [`OwnHeight::follows_content`]). `None` when the flow
+/// cannot model
+/// it: when its boxes reach past its height, whose overflow would go on into
+/// later columns while what follows the wrapper starts where it ends.
+fn own_height(
+    tree: &LayoutSession<'_>,
+    id: usize,
+    layout: &BoxLayout,
+    open: usize,
+) -> Option<OwnHeight> {
+    let (before, after) = block_edges(layout);
+    let children: Vec<usize> = flow_children(tree, id)
+        .into_iter()
+        .filter(|&child| {
+            let node = &tree.nodes[child];
+            node.is_in_document() && !node.is_display_none() && node.kind() == NodeKind::Element
+        })
+        .collect();
+    // Layout leaves the offset of a `position: relative` box to the painter,
+    // so where the boxes are is where block flow put them.
+    let children: Vec<BoxLayout> = children
+        .into_iter()
+        .map(|child| tree.nodes[child].layout)
+        .collect();
+    // Without padding or border above its first box, the top margin of that
+    // box collapses through the wrapper's (CSS 2, 8.3.1), so in the columns
+    // the wrapper's border box starts where that box does, and its height
+    // is counted from there (Chromium).
+    let start = if before > 0.0 || starts_formatting_context(layout_node(tree, id)) {
+        0.0
+    } else {
+        children
+            .iter()
+            .map(|child| child.location.y)
+            .reduce(f32::min)
+            .unwrap_or(0.0)
+    };
+    let end_of = |margins: bool| {
+        children
+            .iter()
+            .map(|child| {
+                let margin = if margins { child.margin.bottom } else { 0.0 };
+                child.location.y + child.size.height + margin
+            })
+            .fold(before, f32::max)
+            - start
+    };
+    let room = layout.size.height - after;
+    // A height that computes to `auto`, as a percentage of an indefinite one
+    // does, and a minimum or maximum that does not bind leave the wrapper
+    // as tall as its boxes.
+    if (room - end_of(false)).abs() <= SLICE_MIN_ROOM && computes_to_auto_height(tree, id) {
+        return Some(OwnHeight {
+            open,
+            height: layout.size.height,
+            tail: 0.0,
+            end: after,
+            truncated: 0.0,
+            follows_content: true,
+        });
+    }
+    // Boxes that reach past the height overflow it. A bottom margin that
+    // does is truncated: the wrapper still ends at its height (Chromium).
+    let tail = room - end_of(true);
+    (tail.is_finite() && room - end_of(false) >= -SLICE_MIN_ROOM).then_some(OwnHeight {
+        open,
+        height: layout.size.height,
+        tail: tail.max(0.0),
+        end: after,
+        truncated: (-tail).max(0.0),
+        follows_content: false,
+    })
+}
+
+/// Whether the `height` of `id` computes to `auto`: it is `auto`, or a
+/// percentage of a parent whose height is not definite (CSS 2, 10.5).
+fn computes_to_auto_height(tree: &LayoutSession<'_>, id: usize) -> bool {
+    let height = style_of(tree, id).size().height;
+    height.is_auto()
+        || resolve_dimension(height, None).is_none()
+            && tree
+                .parent_of(id)
+                .is_none_or(|parent| !has_definite_height(tree, parent))
+}
+
+/// Whether the `height` of `id` is a length, or a percentage of a parent
+/// whose height is definite in turn.
+fn has_definite_height(tree: &LayoutSession<'_>, id: usize) -> bool {
+    let height = style_of(tree, id).size().height;
+    style_dimension_length(height).is_some() || !computes_to_auto_height(tree, id)
+}
+
+/// The height of a wrapper that has one of its own, as the columns take it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct OwnHeight {
+    /// The entry of the flow that starts the wrapper.
+    open: usize,
+    /// The height of its border box from where it starts in the columns.
+    height: f32,
+    /// The room that height leaves between the bottom of the margin box of
+    /// its last in-flow box and the padding below it, when no column end
+    /// falls between them.
+    tail: f32,
+    /// The padding and border below its last box.
+    end: f32,
+    /// How much of the bottom margin of its last box reaches past the
+    /// height, which the wrapper truncates.
+    truncated: f32,
+    /// Whether the wrapper is as tall as its boxes, as one whose `min-height`
+    /// or `max-height` does not bind is: its end is that of a wrapper with no
+    /// height of its own, and the margin below its last box collapses
+    /// through it.
+    follows_content: bool,
 }
 
 /// The number of paragraphs inside `id` when it is a wrapper whose boxes all
@@ -386,7 +531,9 @@ pub(super) fn wrapped_paragraphs(tree: &LayoutSession<'_>, id: usize) -> Option<
         if depth >= MAX_WRAPPER_DEPTH || !is_flow_wrapper(tree, wrapper) {
             return None;
         }
-        if has_block_edges(tree, wrapper) {
+        // The room a height of its own leaves below its boxes is cut at a
+        // column end as such padding is. A zero height leaves none.
+        if has_block_edges(tree, wrapper) || may_leave_room_below_boxes(tree, wrapper) {
             room += 1;
         }
         for child in flow_children(tree, wrapper) {
@@ -408,6 +555,21 @@ pub(super) fn wrapped_paragraphs(tree: &LayoutSession<'_>, id: usize) -> Option<
     // Room with no paragraph beside it is left to the strategies for boxes
     // with no lines.
     Some(if paragraphs > 0 { paragraphs + room } else { 0 })
+}
+
+/// Whether the `height`, `min-height` or `max-height` of `id` is a length or
+/// percentage other than zero. Such a wrapper may leave room below its
+/// boxes, and one as tall as its boxes still ends as the flow places it.
+fn may_leave_room_below_boxes(tree: &LayoutSession<'_>, id: usize) -> bool {
+    let style = style_of(tree, id);
+    let heights: [Dimension; 3] = [
+        style.size().height,
+        style.min_size().height.into(),
+        style.max_size().height.into(),
+    ];
+    heights
+        .iter()
+        .any(|&value| resolve_dimension(value, Some(1.0)).is_some_and(|v| v > 0.0))
 }
 
 /// Whether the wrapper `id` has padding or border above its boxes or below
@@ -523,13 +685,41 @@ fn flow_wrapper(tree: &LayoutSession<'_>, id: usize, breaks: bool) -> bool {
     let margin = style.margin();
     !margin.top.is_auto()
         && !margin.bottom.is_auto()
-        && style.size().height.is_auto()
-        && style.min_size().height.is_auto()
-        && style.max_size().height.is_auto()
         // An aspect ratio gives the wrapper a height of its own, which its
         // boxes alone would not take up.
         && style.aspect_ratio().is_none()
+        && (!breaks && takes_height_of_its_own(tree, id) || height_follows_content(tree, id))
         && lineless::rendered_elements(tree, id).next().is_some()
+}
+
+/// Whether the height of `id` comes from its boxes alone: its `height`,
+/// `min-height` and `max-height` are all `auto`.
+pub(super) fn height_follows_content(tree: &LayoutSession<'_>, id: usize) -> bool {
+    let style = style_of(tree, id);
+    style.size().height.is_auto()
+        && style.min_size().height.is_auto()
+        && style.max_size().height.is_auto()
+}
+
+/// Whether `id` has a `height`, `min-height` or `max-height` that is a length
+/// or a percentage, and none that is an intrinsic keyword, which the columns
+/// would have to resolve against the fragments of its content. Layout gives
+/// such a wrapper its used height before the columns place it: its boxes
+/// break between the columns as those of any wrapper do, and the room the
+/// height leaves below its last box is cut where a column ends, as padding
+/// there is (Chromium).
+fn takes_height_of_its_own(tree: &LayoutSession<'_>, id: usize) -> bool {
+    let style = style_of(tree, id);
+    let stated = |value: Dimension| resolve_dimension(value, Some(0.0)).is_some();
+    let heights: [Dimension; 3] = [
+        style.size().height,
+        style.min_size().height.into(),
+        style.max_size().height.into(),
+    ];
+    heights.iter().any(|&value| !value.is_auto())
+        && heights
+            .iter()
+            .all(|&value| value.is_auto() || stated(value))
 }
 
 /// Whether the wrapper `id` paints a background or borders, which a piece of
@@ -617,6 +807,11 @@ struct Paragraph {
     /// nothing of the breaks between columns, even those that end a page
     /// (Chromium).
     avoids_break: bool,
+    /// For the end of a wrapper with a height of its own, that height: the
+    /// wrapper ends where its border box has taken it in the columns, a gap
+    /// that a column end leaves above a line inside it included, as a box
+    /// with no lines does (Chromium).
+    own_height: Option<OwnHeight>,
 }
 
 impl Paragraph {
@@ -651,6 +846,7 @@ impl Paragraph {
             sliced: false,
             slice_edges: (0.0, 0.0),
             avoids_break: false,
+            own_height: None,
         }
     }
 
@@ -674,7 +870,15 @@ pub(super) fn balance(
         high,
         room,
         sized_leaf,
-    } = collect(tree, &flow, true, BlockEdges::Refused, true, None, false)?;
+    } = collect(
+        tree,
+        &flow,
+        true,
+        BlockEdges::Refused,
+        SizedBoxes::All,
+        None,
+        false,
+    )?;
     // A chain of wrappers around one paragraph keeps the strategies of such
     // chains, unless the wrappers hold room that those cannot place, a sized
     // box with no lines stands beside the paragraph, which the columns slice,
@@ -915,7 +1119,7 @@ pub(super) fn fill_definite(
         &flow,
         true,
         BlockEdges::Sliced,
-        true,
+        SizedBoxes::All,
         Some(height),
         false,
     )?;
@@ -1070,6 +1274,17 @@ fn piece_lines(
     (fitting > start && !strict).then_some(Some(fitting))
 }
 
+/// Which sized boxes [`collect`] takes between the paragraphs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SizedBoxes {
+    /// None of them.
+    None,
+    /// Sized boxes with nothing inside them.
+    Leaves,
+    /// Those, and sized boxes with lines inside their height.
+    All,
+}
+
 /// The paragraphs of `entries` with their line extents, when each entry is a
 /// plain paragraph. With `atomics`, a paragraph may hold atomic inlines, which
 /// go to the column of their line. The row and page streams place only lines,
@@ -1079,7 +1294,8 @@ fn piece_lines(
 /// places those edges with the lines passes that. With `sized`, a sized box
 /// with nothing inside it, or with lines inside its height, may stand between
 /// the paragraphs, which a column end slices; only the streams that place the
-/// pieces of such a box pass that. With `boxes`, the height of the columns of
+/// pieces of such a box pass that; the page stream takes only the boxes with
+/// nothing inside them ([`SizedBoxes::Leaves`]). With `boxes`, the height of the columns of
 /// a stream that fills definite-height columns, a box that makes a formatting
 /// context of its own and holds one row of lines no taller than a column may
 /// stand there too, which goes whole to one.
@@ -1094,7 +1310,7 @@ fn collect(
     flow: &Flow,
     atomics: bool,
     edges: BlockEdges,
-    sized: bool,
+    sized: SizedBoxes,
     boxes: Option<f32>,
     forced: bool,
 ) -> Option<Collected> {
@@ -1118,24 +1334,42 @@ fn collect(
             // them apart too, as it starts a formatting context of its own
             // (CSS 2, 8.3.1): such an edge stands in the flow as a piece with
             // no height.
-            room |= has_block_edges(tree, child);
+            // The room that the height of a wrapper leaves below its last
+            // box is part of its end, which keeps the margins of that box
+            // apart from its own.
+            // A wrapper as tall as its boxes ends as one with no height of
+            // its own does, but still needs this plan: the strategies for a
+            // chain of wrappers around one paragraph take no height.
+            room |= has_block_edges(tree, child) || flow.tails[index].is_some();
+            let own = flow.tails[index].filter(|own| !own.follows_content);
+            let tail = own.map(|own| own.tail);
             let (before, after) = block_edges(&layout);
+            // A negative margin above the end cancels the part of the margin
+            // below the last box that the height truncates.
+            let margin_top = match own {
+                Some(own) if role == Role::Close => margin_top - own.truncated,
+                _ => margin_top,
+            };
             let edge = if matches!(role, Role::Open(_)) {
                 before
             } else {
-                after
+                after + tail.unwrap_or(0.0)
             };
             (margin_top.is_finite() && margin_bottom.is_finite() && edge.is_finite())
                 .then_some(())?;
             high += edge + margin_top.abs() + margin_bottom.abs();
-            let separates = edge > 0.0 || starts_formatting_context(layout_node(tree, child));
+            let separates =
+                edge > 0.0 || tail.is_some() || starts_formatting_context(layout_node(tree, child));
             paragraphs.push(Some(Paragraph {
                 break_before: false,
                 opens: match role {
                     Role::Open(close) if separates => Some(close),
                     _ => None,
                 },
-                closes: role == Role::Close && edge > 0.0,
+                // The end of a wrapper with a height of its own is cut where
+                // a column ends, padding and all, and keeps no line with it
+                // (Chromium).
+                closes: role == Role::Close && edge > 0.0 && tail.is_none(),
                 sized_leaf: false,
                 slice_edges: (0.0, 0.0),
                 extents: if separates {
@@ -1156,6 +1390,7 @@ fn collect(
                 overflows: false,
                 sliced: separates,
                 avoids_break: false,
+                own_height: own,
             }));
             continue;
         }
@@ -1194,7 +1429,10 @@ fn collect(
         // extent that a column end cuts.
         // One that avoids breaks, or that a cut would paint wrong, goes whole
         // to a column that holds it.
-        if sized && output.size.height > 0.0 && lineless::is_sized_leaf(tree, child) {
+        if sized != SizedBoxes::None
+            && output.size.height > 0.0
+            && lineless::is_sized_leaf(tree, child)
+        {
             let sliced = lineless::slices_sized_leaf(tree, child);
             sized_leaf |= sliced;
             high += output.size.height + margin_top.abs() + margin_bottom.abs();
@@ -1215,7 +1453,7 @@ fn collect(
         // a cut would paint it wrong: then it goes whole to a column that
         // holds it. Its lines must lie inside its height, or they would reach
         // past the piece that holds them.
-        if sized && output.size.height > 0.0 && is_sized_paragraph(tree, child) {
+        if sized == SizedBoxes::All && output.size.height > 0.0 && is_sized_paragraph(tree, child) {
             let lines = node.ifc.as_ref()?.lines.as_ref()?;
             let (before, after) = block_edges(&layout);
             let reach = lines
@@ -1382,6 +1620,7 @@ fn collect(
                 overflows: false,
                 sliced: false,
                 avoids_break: false,
+                own_height: None,
             }));
             continue;
         }
@@ -1422,6 +1661,7 @@ fn collect(
                 node.break_inside,
                 BreakInside::Avoid | BreakInside::AvoidColumn
             ),
+            own_height: None,
         }));
         paragraph_count += 1;
     }
@@ -1590,6 +1830,29 @@ fn first_piece(paragraphs: &[Option<Paragraph>], padding: f32, start: usize, clo
         return need + piece;
     }
     need
+}
+
+/// Where the border box of the wrapper that `paragraphs[open]` starts begins
+/// in the columns `placements` fill from `resume`, which hold the entries up
+/// to `close`, the one that ends it: where its first entry that takes room,
+/// the padding above its first box or that box, starts. `None` when the
+/// wrapper started before `resume`, or holds nothing that takes room.
+fn wrapper_start(
+    paragraphs: &[Option<Paragraph>],
+    placements: &[Option<Placement>],
+    open: usize,
+    close: usize,
+    resume: FlowCursor,
+) -> Option<(usize, f32)> {
+    // A wrapper the flow resumed inside started in an earlier fill.
+    let started_here = open >= resume.paragraph;
+    (open..close).filter(|_| started_here).find_map(|index| {
+        paragraphs.get(index)?.as_ref()?.extents.first()?;
+        let placement = placements
+            .get(index.checked_sub(resume.paragraph)?)?
+            .as_ref()?;
+        Some((placement.first_column, placement.first_y))
+    })
 }
 
 /// The room below the last line of `last`, which is `paragraphs[index]`, that
@@ -1883,6 +2146,18 @@ fn fill_chunk_with(
         }
         if paragraph.sliced {
             let mut left = paragraph.extents[0].1 - paragraph.extents[0].0;
+            // The end of a wrapper with a height of its own takes what its
+            // height leaves of the columns since the wrapper started, so a
+            // gap that a column end left above a line inside it shortens it.
+            // A wrapper whose boxes reach past that height ends below them,
+            // with the padding and border below them.
+            if let Some(own) = paragraph.own_height
+                && let Some((start_column, start_y)) =
+                    wrapper_start(paragraphs, &placements, own.open, paragraph_index, resume)
+            {
+                let taken = (column - start_column) as f32 * height + top - start_y;
+                left = (own.height - taken).max(own.end);
+            }
             // In columns of a definite height, which go on in overflow
             // columns, the padding below the last box of a wrapper goes
             // whole to the next column when the rest of this one is too short
@@ -2393,7 +2668,7 @@ pub(super) fn fill_rows(
         &Flow::plain(entries),
         false,
         BlockEdges::Refused,
-        false,
+        SizedBoxes::None,
         None,
         false,
     )
@@ -2541,6 +2816,13 @@ pub(super) struct PagedFragment {
     pub(super) line_end: usize,
     pub(super) fragmentainer: usize,
     pub(super) rect: crate::fragment::FragmentRect,
+    /// Where what the fragment shows of its box ends: the bottom of `rect`,
+    /// unless the fragment is a piece of a sliced box that paints whole and
+    /// that its column clips.
+    bottom: f32,
+    /// Whether the fragment holds lines of its box, rather than a piece of a
+    /// box with no lines.
+    pub(super) holds_lines: bool,
     /// The cut of the column, or `None` for a fragment that holds its whole
     /// paragraph, which has no neighbour to keep out.
     pub(super) clip: Option<raikiri_traits::PaintClip>,
@@ -2619,27 +2901,34 @@ pub(super) fn paginate(
         .sum::<usize>();
     work.charge(flow.entries.len().saturating_add(wrapped_lines))?;
     let entries = &flow.entries;
-    // The page stream places lines, and the padding and border above or
-    // below the boxes of a wrapper, which it records as pieces of the
-    // wrapper. Sized boxes with no lines inside a wrapper are left to the
-    // other strategies.
-    if flow.entries.iter().zip(&flow.parents).zip(&flow.roles).any(
-        |(((child, ..), parent), role)| {
-            parent.is_some() && *role == Role::Box && is_wrapped_leaf(tree, *child)
-        },
-    ) {
-        return Ok(None);
-    }
+    // The page stream places lines, the padding and border above or below
+    // the boxes of a wrapper, which it records as pieces of the wrapper, and
+    // sized boxes with no lines, which a column end slices.
     let Some(Collected {
         paragraphs,
         paragraph_count: count,
         high: ceiling,
         room,
         ..
-    }) = collect(tree, &flow, false, BlockEdges::Sliced, false, None, true)
+    }) = collect(
+        tree,
+        &flow,
+        false,
+        BlockEdges::Sliced,
+        SizedBoxes::Leaves,
+        None,
+        true,
+    )
     else {
         return Ok(None);
     };
+    // A page end that cuts a sized box fails the fill, as the stream resumes
+    // no box in the middle: such a box is left to the other strategies rather
+    // than moved whole to the next page.
+    let holds_sized_leaf = paragraphs
+        .iter()
+        .flatten()
+        .any(|paragraph| paragraph.sized_leaf && paragraph.sliced);
     if count == 0 || context.column_count == 0 {
         return Ok(None);
     }
@@ -2694,7 +2983,7 @@ pub(super) fn paginate(
             // A short remainder can contain fewer lines than the paragraph's
             // break minima. Retry at the next complete page, without a soft
             // break inside the paragraph or a zero-progress page loop.
-            if absolute_y > page_origin + 0.001 {
+            if absolute_y > page_origin + 0.001 && !holds_sized_leaf {
                 absolute_y = page_origin + page_height;
                 continue;
             }
@@ -2790,6 +3079,7 @@ pub(super) fn paginate(
             chunk.group.height.max(divided).max(kept)
         };
         let group_y = absolute_y - owner_y;
+        let planned = chunk.group.height;
         let mut occupied = std::collections::BTreeSet::new();
         for (offset, placement) in chunk.group.placements.into_iter().enumerate() {
             let index = resume.paragraph + offset;
@@ -2813,6 +3103,18 @@ pub(super) fn paginate(
                 })
             {
                 return Ok(None);
+            }
+            if paragraph.sized_leaf {
+                let leaf = LeafPlacement {
+                    flow: &flow,
+                    index,
+                    placement: &placement,
+                    total: paragraph.extents[0].1 - paragraph.extents[0].0,
+                };
+                let at = (page_index as usize, group_y, height, planned);
+                let out = (&mut result.fragments, &mut occupied);
+                push_leaf_pieces(tree, out, leaf, context, at, work)?;
+                continue;
             }
             let mut ranges = placement.fragments.into_iter().peekable();
             while let Some(range) = ranges.next() {
@@ -2871,6 +3173,8 @@ pub(super) fn paginate(
                     line_end: range.line_end,
                     fragmentainer,
                     rect,
+                    bottom: rect.y + rect.height,
+                    holds_lines: true,
                     // The clip cuts a fragment at the block edges of its
                     // column, so the lines of its neighbours stay out, and
                     // leaves the inline axis open. The edge where the
@@ -2929,6 +3233,109 @@ pub(super) fn paginate(
     Ok(Some(result))
 }
 
+/// Where the page stream placed a sized box with no lines: the `index`th
+/// entry of `flow`, of block size `total`.
+struct LeafPlacement<'a> {
+    flow: &'a Flow,
+    index: usize,
+    placement: &'a Placement,
+    total: f32,
+}
+
+/// Push the pieces of a sized box with no lines that the page stream placed
+/// on page `page` of the columns, whose group starts at `group_y` and is
+/// `height` tall, of the columns `planned` tall that the fill placed it in.
+/// Each piece but the last fills the rest of its column, and the last holds
+/// what is left of the box. The box paints whole in each piece, moved up by
+/// what the earlier pieces took, and the column clips it, which slices its
+/// block-axis border and padding (CSS Fragmentation 3, 5.4).
+fn push_leaf_pieces(
+    tree: &LayoutSession<'_>,
+    (fragments, occupied): (
+        &mut Vec<PagedFragment>,
+        &mut std::collections::BTreeSet<usize>,
+    ),
+    leaf: LeafPlacement<'_>,
+    context: FragmentationContext,
+    (page, group_y, height, planned): (usize, f32, f32, f32),
+    work: &mut ProjectionWork<'_, '_>,
+) -> Result<(), LayoutError> {
+    let LeafPlacement {
+        flow,
+        index,
+        placement,
+        total,
+    } = leaf;
+    let (child, _, layout, ..) = flow.entries[index];
+    let count = placement.fragments.len();
+    let mut taken = 0.0f32;
+    for (piece, range) in placement.fragments.iter().enumerate() {
+        work.charge(1)?;
+        let y = placement.first_y + range.y;
+        let last = piece + 1 == count;
+        // A piece between the first and the last fills the column the fill
+        // planned, which may be shorter than the columns of the page.
+        let used = if last {
+            (total - taken).max(0.0)
+        } else if piece == 0 {
+            placement.first_height
+        } else {
+            (planned - y).max(0.0)
+        };
+        let column = range.fragmentainer;
+        let fragmentainer = page
+            .checked_mul(context.column_count)
+            .and_then(|first| first.checked_add(column))
+            .ok_or(LayoutError::FragmentLimitExceeded {
+                limit: tree.fragment_tree.limit,
+            })?;
+        let x = context.origin_x + context.column_offset_x(column);
+        occupied.insert(column);
+        let rect = crate::fragment::FragmentRect {
+            x: x + flow.insets[index] + layout.margin.left,
+            y: group_y + y,
+            width: layout.size.width,
+            height: used,
+        };
+        fragments.push(PagedFragment {
+            child,
+            entry: index,
+            wrapper: flow.parents[index].map(|open| flow.entries[open].0),
+            line_start: range.line_start,
+            line_end: range.line_end,
+            fragmentainer,
+            rect: lineless::sliced_rect(rect, Some((taken, total))),
+            bottom: rect.y + rect.height,
+            holds_lines: false,
+            // The clip cuts a piece where the box breaks, and leaves the edges
+            // where it begins and ends open, as a paragraph's are.
+            clip: (count > 1).then(|| {
+                let top = if piece == 0 {
+                    group_y - BLOCK_INK_REACH
+                } else {
+                    group_y
+                };
+                // A piece before the last ends where the fill ended it, which
+                // is above the end of its column when the edge below the box
+                // goes on alone to the next one.
+                let bottom = if last {
+                    group_y + height + BLOCK_INK_REACH
+                } else {
+                    group_y + y + used
+                };
+                inline_open_clip(crate::fragment::FragmentRect {
+                    x,
+                    y: top,
+                    width: context.column_width,
+                    height: bottom - top,
+                })
+            }),
+        });
+        taken += used;
+    }
+    Ok(())
+}
+
 /// The border boxes of the wrappers of `flow`, from the pieces of the boxes
 /// they hold, which are in flow order. A wrapper whose boxes have no piece
 /// has none. `pages` gives the top and the height of the columns of each
@@ -2960,7 +3367,7 @@ fn paged_wrappers(
         let (layout, first_layout) = (flow.entries[open].2, flow.entries[first.entry].2);
         let bottom = fragments[start..end]
             .iter()
-            .map(|fragment| fragment.rect.y + fragment.rect.height)
+            .map(|fragment| fragment.bottom)
             .fold(first.rect.y, f32::max);
         // The pieces start at the left of a column, past the insets of their
         // wrappers.
@@ -3025,7 +3432,7 @@ fn wrapper_pieces(
 ) -> Vec<WrapperPiece> {
     let mut columns: Vec<(usize, f32)> = Vec::new();
     for fragment in fragments {
-        let bottom = fragment.rect.y + fragment.rect.height;
+        let bottom = fragment.bottom;
         match columns.last_mut() {
             Some((fragmentainer, end)) if *fragmentainer == fragment.fragmentainer => {
                 *end = end.max(bottom);
