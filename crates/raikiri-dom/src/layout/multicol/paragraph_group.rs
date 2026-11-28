@@ -2086,7 +2086,10 @@ fn avoided_column_end(
             && takes_room(index)
     };
     // The entry that a column end comes before, and the column it ends.
-    let (end, column) = (from.max(resume.paragraph + 1)..paragraphs.len())
+    // Only the entries the chunk placed can come after a column end inside
+    // it; the one after its last column comes next.
+    let placed = (resume.paragraph + chunk.group.placements.len()).min(paragraphs.len());
+    let (end, column) = (from.max(resume.paragraph + 1)..placed)
         .find_map(|index| {
             let placement = placement(index).filter(|_| avoided(index))?;
             (placement.first_column > placement.entry_column)
