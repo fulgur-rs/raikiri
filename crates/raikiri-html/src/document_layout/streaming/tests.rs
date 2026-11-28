@@ -124,7 +124,7 @@ impl PageSink for &mut Record {
                 assert_eq!(row.len(), 1);
                 assert_eq!(row[0].text, format!("row & {}", self.sample_rows));
                 assert!(row[0].node.unwrap() > row[0].cell);
-                self.measured_cells += usize::from(row[0].measured.is_some());
+                self.measured_cells += usize::from(rows.measured_cell(&row[0]).is_some());
                 self.sample_rows += 1;
             }
             if self.sample_rows >= 256 && self.complete_sample_count.is_none() {
@@ -305,22 +305,29 @@ fn write_feeds_the_layout() {
 #[test]
 fn write_errors_are_returned_unchanged_by_finish() {
     let resources = RenderResources::new();
-    let mut record = Record::default();
-    let mut stream = StreamingLayout::new(
-        &resources,
-        PageDefaults::default(),
-        LayoutConfig::default(),
-        &mut record,
-    );
-    stream.feed(b"<p>").unwrap();
-    assert!(stream.write_all(b"\xFF</p>").is_err());
-    assert!(stream.write_all(b"more").is_err(), "input stays failed");
-    let error = stream.finish().expect_err("finish fails");
-    assert!(matches!(
-        error,
-        RenderError::Parse(ParseError::Encoding { .. })
-    ));
-    assert!(!record.finished);
+    for feed_prefix in [false, true] {
+        let mut record = Record::default();
+        let mut stream = StreamingLayout::new(
+            &resources,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            &mut record,
+        );
+        let invalid: &[u8] = if feed_prefix {
+            stream.feed(b"<p>").unwrap();
+            b"\xFF</p>"
+        } else {
+            b"<p>\xFF</p>"
+        };
+        assert!(stream.write_all(invalid).is_err());
+        assert!(stream.write_all(b"more").is_err(), "input stays failed");
+        let error = stream.finish().expect_err("finish fails");
+        assert!(matches!(
+            error,
+            RenderError::Parse(ParseError::Encoding { .. })
+        ));
+        assert!(!record.finished);
+    }
 }
 
 #[test]
@@ -2428,6 +2435,7 @@ fn cancelling_before_the_first_table_sample_reports_aborted() {
     let mut sink = Record {
         inspect_sample: true,
         abort_before_sample: Some(controller),
+        glyph_budget: 1024,
         ..Default::default()
     };
     assert!(matches!(

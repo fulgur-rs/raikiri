@@ -4209,9 +4209,18 @@ pub(crate) enum WindowColumns {
 }
 
 impl TableColumnMeasurements {
-    /// Collect glyph records within a shared byte budget using two fresh, independent files.
-    #[doc(hidden)]
-    pub fn with_glyph_records(data: std::fs::File, index: std::fs::File, budget: u64) -> Self {
+    /// Retain eligible glyph records within a per-document temporary file budget.
+    /// A zero budget or an unavailable temporary file disables recording.
+    pub fn with_glyph_record_budget(budget: u64) -> Self {
+        if budget == 0 {
+            return Self::default();
+        }
+        let Ok(data) = tempfile::tempfile() else {
+            return Self::default();
+        };
+        let Ok(index) = tempfile::tempfile() else {
+            return Self::default();
+        };
         Self {
             glyph_store: Some(std::sync::Arc::new(crate::table_glyphs::store::Store::new(
                 data, index, budget,

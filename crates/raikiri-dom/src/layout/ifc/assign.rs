@@ -837,9 +837,18 @@ fn write_roots(doc: &mut Document, cascade: &CascadeResult, built: Vec<(usize, I
                 && let Some(row) = node.parent
                 && let Some(group) = doc.nodes[row].parent
                 && doc.nodes[group].tag_name() == Some("tbody")
+                && let [child] = node.children.as_slice()
+                && let Some(text) = doc.nodes[*child].text_content()
                 && let Some(source) = doc.source_node_index(*idx)
             {
-                crate::table_glyphs::capture(store, source, &root.paragraph, &mut cx);
+                crate::table_glyphs::capture(
+                    store,
+                    source,
+                    text,
+                    &root.paragraph,
+                    &root.options,
+                    &mut cx,
+                );
             }
         }
     }

@@ -38,6 +38,7 @@ rayon          = "1.8"
 smol_str       = { workspace = true }
 stacker        = { workspace = true }
 taffy          = { workspace = true }
+tempfile       = { workspace = true }
 wuff           = { workspace = true }
 url            = { workspace = true }
 
@@ -50,7 +51,6 @@ criterion = { workspace = true }
 # dev-dependency without a version from the published manifest).
 raikiri-html = { path = "../raikiri-html" }
 raikiri-style = { workspace = true }
-tempfile = { workspace = true }
 
 [lints]
 workspace = true

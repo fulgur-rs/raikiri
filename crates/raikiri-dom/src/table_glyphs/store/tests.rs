@@ -17,7 +17,7 @@ fn records_require_exact_length_and_a_committed_slot() {
 }
 
 #[test]
-fn exceeding_either_budget_stops_writes_and_preserves_commits() {
+fn oversized_records_and_ids_leave_room_for_later_records() {
     for (id, len) in [(1, 48), (2, 0), (usize::MAX, 0)] {
         let store = Store::new(
             tempfile::tempfile().unwrap(),
@@ -26,27 +26,29 @@ fn exceeding_either_budget_stops_writes_and_preserves_commits() {
         );
         store.write(0, b"a");
         store.write(id, &vec![0; len]);
-        assert!(!store.can_write());
+        assert!(store.can_write(1, 1));
         store.write(1, b"b");
         let mut byte = [0];
         assert!(store.read(0, &mut byte));
         assert_eq!(&byte, b"a");
-        assert!(!store.read(1, &mut byte));
+        assert!(store.read(1, &mut byte));
+        assert_eq!(&byte, b"b");
     }
 }
 
 #[test]
 fn partial_writes_leave_other_commits_readable() {
-    for failing_call in 0..3 {
+    for failing_call in 0..2 {
         let store = Store::new(
             tempfile::tempfile().unwrap(),
             tempfile::tempfile().unwrap(),
             1024,
         );
         store.write(0, b"one");
+        assert!(store.read(0, &mut [0; 3]));
         store.write(1, b"two");
         let mut call = 0;
-        store.0.lock().unwrap().write(1, b"six", |file, bytes| {
+        store.0.lock().unwrap().flush(|file, bytes| {
             if call == failing_call {
                 file.write_all(&bytes[..1])?;
                 return Err(io::Error::other("short write"));
@@ -100,4 +102,114 @@ fn exact_disk_limits_accept_the_last_record() {
     let files = store.0.lock().unwrap();
     assert_eq!(files.data.metadata().unwrap().len(), 48);
     assert_eq!(files.index.metadata().unwrap().len(), 16);
+}
+
+#[test]
+fn repeated_ids_consume_space_only_once_across_batches() {
+    let store = Store::new(
+        tempfile::tempfile().unwrap(),
+        tempfile::tempfile().unwrap(),
+        64,
+    );
+    store.write(1, b"first");
+    store.write(1, b"other");
+    let mut bytes = [0; 5];
+    assert!(store.read(1, &mut bytes));
+    store.write(1, b"later");
+    store.write(0, &[7; 27]);
+    assert!(store.read(0, &mut [0; 27]));
+    assert!(store.read(1, &mut bytes));
+    assert_eq!(&bytes, b"first");
+    assert!(!store.can_write(1, 1));
+}
+
+#[test]
+fn nearby_sparse_slots_share_a_single_index_write() {
+    let store = Store::new(
+        tempfile::tempfile().unwrap(),
+        tempfile::tempfile().unwrap(),
+        32768,
+    );
+    for id in (0..100).step_by(2).rev() {
+        store.write(id, b"x");
+    }
+    let mut writes = 0;
+    store.0.lock().unwrap().flush(|file, bytes| {
+        writes += 1;
+        file.write_all(bytes)
+    });
+    assert_eq!(writes, 2);
+    for id in 0..100 {
+        assert_eq!(store.read(id, &mut [0]), id % 2 == 0);
+    }
+}
+
+#[test]
+fn sequential_reads_reuse_prefetched_data_and_offsets() {
+    let store = Store::new(
+        tempfile::tempfile().unwrap(),
+        tempfile::tempfile().unwrap(),
+        1024,
+    );
+    store.write(0, b"first");
+    store.write(1, b"later");
+    let mut bytes = [0; 5];
+    assert!(store.read(0, &mut bytes));
+    {
+        let mut files = store.0.lock().unwrap();
+        files.data.rewind().unwrap();
+        files.index.rewind().unwrap();
+    }
+    assert!(store.read(1, &mut bytes));
+    assert_eq!(&bytes, b"later");
+    let mut files = store.0.lock().unwrap();
+    assert_eq!(files.data.stream_position().unwrap(), 0);
+    assert_eq!(files.index.stream_position().unwrap(), 0);
+}
+
+#[test]
+fn truncated_batch_still_returns_complete_earlier_records() {
+    for truncate_index in [false, true] {
+        let store = Store::new(
+            tempfile::tempfile().unwrap(),
+            tempfile::tempfile().unwrap(),
+            1024,
+        );
+        store.write(0, b"first");
+        store.write(1, b"later");
+        {
+            let mut files = store.0.lock().unwrap();
+            files.flush(File::write_all);
+            if truncate_index {
+                files.index.set_len(13).unwrap();
+            } else {
+                files.data.set_len(24).unwrap();
+            }
+        }
+        let mut bytes = [0; 5];
+        assert!(store.read(0, &mut bytes));
+        assert_eq!(&bytes, b"first");
+        assert!(!store.read(1, &mut bytes));
+    }
+}
+
+#[test]
+fn inserting_into_sparse_holes_preserves_older_records_between_them() {
+    let store = Store::new(
+        tempfile::tempfile().unwrap(),
+        tempfile::tempfile().unwrap(),
+        65536,
+    );
+    store.write(1, b"old");
+    store.write(600, b"far");
+    let mut bytes = [0; 3];
+    assert!(store.read(600, &mut bytes));
+    store.write(0, b"new");
+    store.write(2, b"new");
+    assert!(store.read(2, &mut bytes));
+    assert_eq!(&bytes, b"new");
+    assert!(store.read(1, &mut bytes));
+    assert_eq!(&bytes, b"old");
+    assert!(store.read(600, &mut bytes));
+    assert_eq!(&bytes, b"far");
 }

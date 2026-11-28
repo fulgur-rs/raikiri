@@ -24,16 +24,32 @@ fn record_len(text: &str) -> usize {
 pub(crate) fn capture(
     store: &store::Store,
     id: usize,
+    text: &str,
     p: &shodo::Paragraph,
+    options: &shodo::style::LineOptions,
     cx: &mut shodo::LayoutContext,
 ) {
-    let text = p.text();
-    if !eligible_text(text) || !store.can_write() {
+    // Justification can change advances when the cell gets its final width.
+    if !eligible_text(text)
+        || text != p.text()
+        || options.text_align == shodo::style::TextAlign::JustifyAll
+        || options.text_align_last == shodo::style::TextAlignLast::Justify
+        || !store.can_write(id, record_len(text))
+    {
         return;
     }
-    let lines = p.break_all(cx, &Default::default(), 100_000.0, &Default::default());
-    let [line] = lines.as_slice() else { return };
-    if line.writing_mode() != shodo::geometry::WritingMode::HorizontalTb
+    // Intrinsic sizing returns widths. Shodo exposes glyphs on a materialized line.
+    let shodo::LineResult::Line(line) = p.next_line(
+        cx,
+        p.start_token(),
+        options,
+        &shodo::LineConstraint::new(100_000.0),
+        &shodo::AtomicSizes::EMPTY,
+    ) else {
+        return;
+    };
+    if line.break_reason() != shodo::BreakReason::End
+        || line.writing_mode() != shodo::geometry::WritingMode::HorizontalTb
         || line.used_direction() != shodo::geometry::Direction::Ltr
     {
         return;
@@ -161,7 +177,11 @@ impl MeasuredTableCell {
     /// Replace a sample's text and glyphs when the face, metrics, cell text and
     /// available width match. The caller supplies the sample for the corresponding
     /// column, verifies the cell geometry, and assigns the target origin, line and
-    /// source. Samples with page-positioned decoration segments are declined.
+    /// source. The caller must verify equivalent paint styles and coordinate
+    /// systems for both cells. Color, shadows and transform belong to the
+    /// sample. Stored advances include the measured cell's glyph spacing.
+    /// Samples with page-positioned decoration segments are declined.
+    /// After replacement the sample borrows the caller's text and owns its glyphs.
     /// A declined replacement leaves the sample intact.
     pub fn apply<'a>(
         &self,
@@ -174,6 +194,8 @@ impl MeasuredTableCell {
             || sample.font_size != self.size
             || sample.ascent != self.ascent
             || sample.descent != self.descent
+            || sample.text_offset != 0
+            || sample.letter_box.is_some()
             || !sample.decorations.is_empty()
             || !sample.variations.is_empty()
             || !sample.normalized_coords.is_empty()

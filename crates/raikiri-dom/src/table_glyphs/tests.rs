@@ -6,7 +6,7 @@ fn measured_glyphs_match_projected_text_and_require_compatible_sample() {
     let body = document.append_element(
         Some(0),
         "body",
-        Some("display:block;font:10px Ahem;text-decoration:underline"),
+        Some("display:block;font:10px Ahem;text-decoration:underline;color:maroon;text-shadow:1px 2px red"),
     );
     document.append_text(body, "123");
     let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(
@@ -43,12 +43,27 @@ fn measured_glyphs_match_projected_text_and_require_compatible_sample() {
         .as_ref()
         .unwrap()
         .paragraph;
-    capture(&store, body, paragraph, &mut shodo::LayoutContext::new());
+    let mut cx = shodo::LayoutContext::new();
+    let options = shodo::style::LineOptions::default();
+    capture(&store, body, " 123 ", paragraph, &options, &mut cx);
+    assert!(read(&store, body, "123").is_none());
+    let justify = shodo::style::LineOptions {
+        text_align_last: shodo::style::TextAlignLast::Justify,
+        ..options
+    };
+    capture(&store, body, "123", paragraph, &justify, &mut cx);
+    assert!(read(&store, body, "123").is_none());
+    capture(&store, body, "123", paragraph, &options, &mut cx);
     assert!(read(&store, body, "124").is_none());
     let record = read(&store, body, "123").unwrap();
     let mut sample = document.page_text_runs(&cascade, 0).pop().unwrap();
     let reference = sample.glyphs.clone();
     let width = sample.advance;
+    let color = sample.color;
+    let shadows = sample.shadows.clone();
+    assert_eq!(shadows.len(), 1);
+    let transform = Some(raikiri_traits::PaintTransform::translate(3.0, 7.0));
+    sample.transform = transform;
     assert!(!sample.decorations.is_empty());
     assert!(!record.apply(&mut sample, "123", width));
     sample.decorations.clear();
@@ -77,11 +92,17 @@ fn measured_glyphs_match_projected_text_and_require_compatible_sample() {
     sample.normalized_coords.push(1);
     assert!(!record.apply(&mut sample, "123", width));
     sample.normalized_coords.clear();
+    sample.text_offset = 1;
+    assert!(!record.apply(&mut sample, "123", width));
+    sample.text_offset = 0;
     assert_eq!(sample.text, "abc");
     assert!(sample.glyphs.is_empty());
     assert!(record.apply(&mut sample, "123", width));
     assert_eq!(sample.text, "123");
     assert_eq!(sample.glyphs, reference);
+    assert_eq!(sample.color, color);
+    assert_eq!(sample.shadows, shadows);
+    assert_eq!(sample.transform, transform);
 }
 
 #[test]
