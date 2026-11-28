@@ -4,7 +4,9 @@
 //! formatting context around it: beside a float when it fits in the room the
 //! float leaves, below it when it does not (CSS 2.1 section 9.5). It also
 //! contains its own floats and keeps the margins of its children from
-//! collapsing with its own (section 9.4.1).
+//! collapsing with its own (section 9.4.1). In a multicol container, the
+//! blocks of a fieldset with no rendered legend break between the columns, as
+//! those of a `flow-root` box do.
 //!
 //! The expected border boxes are the ones Chromium computes for the same
 //! markup in an 800px by 600px viewport, with no margin on the body. The
@@ -41,6 +43,9 @@ enum Group {
     Contents,
     /// A fieldset in a flex or grid container, out of flow, between lines.
     Elsewhere,
+    /// A fieldset with no legend in a multicol container, whose blocks break
+    /// between the columns as those of a `flow-root` box do.
+    Columns,
 }
 
 /// One markup and the boxes Chromium gives it.
@@ -125,6 +130,11 @@ fn a_fieldset_holds_its_floats_and_its_children_margins() {
 #[test]
 fn a_fieldset_in_a_flex_or_grid_container_out_of_flow_or_between_lines() {
     check_group(Group::Elsewhere);
+}
+
+#[test]
+fn the_blocks_of_a_fieldset_break_between_columns() {
+    check_group(Group::Columns);
 }
 
 /// The page, from 0, and the top and height on that page's area of the first
@@ -655,6 +665,253 @@ const CASES: &[Case] = &[
         expected: &[
             ("o", (0.0, 0.0, 200.0, 26.0)),
             ("c", (100.0, 0.0, 100.0, 26.0)),
+        ],
+    },
+    Case {
+        name: "columns_two_blocks",
+        group: Group::Columns,
+        body: "<div id=o style=\"columns:2;column-gap:0;width:200px\"><fieldset id=c style='display:block;margin:0;padding:0;border:0;min-width:0'><div id=a>aa</div><div id=b>bb</div></fieldset></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 200.0, 10.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 0.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "columns_four_blocks",
+        group: Group::Columns,
+        body: "<div id=o style=\"columns:2;column-gap:0;width:200px\"><fieldset id=c style='display:block;margin:0;padding:0;border:0;min-width:0'><div id=a>aa</div><div id=b>bb</div><div id=d>cc</div><div id=e>dd</div></fieldset></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 200.0, 20.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (0.0, 10.0, 100.0, 10.0)),
+            ("d", (100.0, 0.0, 100.0, 10.0)),
+            ("e", (100.0, 10.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "columns_child_margins",
+        group: Group::Columns,
+        body: "<div id=o style=\"columns:2;column-gap:0;width:200px\"><fieldset id=c style='display:block;margin:0;padding:0;border:0;min-width:0'><div id=a style='margin-top:10px'>aa</div><div id=b style='margin-bottom:10px'>bb</div></fieldset></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 200.0, 20.0)),
+            ("a", (0.0, 10.0, 100.0, 10.0)),
+            ("b", (100.0, 0.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "columns_block_padding",
+        group: Group::Columns,
+        body: "<div id=o style=\"columns:2;column-gap:0;width:200px\"><fieldset id=c style='display:block;margin:0;padding:0;border:0;min-width:0;padding:5px 0'><div id=a>aa</div><div id=b>bb</div></fieldset></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 200.0, 15.0)),
+            ("a", (0.0, 5.0, 100.0, 10.0)),
+            ("b", (100.0, 0.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "columns_border",
+        group: Group::Columns,
+        body: "<div id=o style=\"columns:2;column-gap:0;width:200px\"><fieldset id=c style='display:block;margin:0;padding:0;border:0;min-width:0;border:2px solid'><div id=a>aa</div><div id=b>bb</div></fieldset></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 200.0, 12.0)),
+            ("a", (2.0, 2.0, 96.0, 10.0)),
+            ("b", (102.0, 0.0, 96.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "columns_background",
+        group: Group::Columns,
+        body: "<div id=o style=\"columns:2;column-gap:0;width:200px\"><fieldset id=c style='display:block;margin:0;padding:0;border:0;min-width:0;background:red'><div id=a>aa</div><div id=b>bb</div></fieldset></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 200.0, 10.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 0.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "columns_between_blocks",
+        group: Group::Columns,
+        body: "<div id=o style=\"columns:2;column-gap:0;width:200px\"><div id=p>xx</div><fieldset id=c style='display:block;margin:0;padding:0;border:0;min-width:0'><div id=a>aa</div><div id=b>bb</div><div id=d>cc</div></fieldset><div id=q>yy</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 200.0, 30.0)),
+            ("p", (0.0, 0.0, 100.0, 10.0)),
+            ("a", (0.0, 10.0, 100.0, 10.0)),
+            ("b", (0.0, 20.0, 100.0, 10.0)),
+            ("d", (100.0, 0.0, 100.0, 10.0)),
+            ("q", (100.0, 10.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "columns_definite_height",
+        group: Group::Columns,
+        body: "<div id=o style=\"columns:2;column-gap:0;width:200px;height:20px\"><fieldset id=c style='display:block;margin:0;padding:0;border:0;min-width:0'><div id=a>aa</div><div id=b>bb</div><div id=d>cc</div></fieldset></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 200.0, 20.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (0.0, 10.0, 100.0, 10.0)),
+            ("d", (100.0, 0.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "columns_definite_height_fill_auto",
+        group: Group::Columns,
+        body: "<div id=o style=\"columns:2;column-gap:0;width:200px;height:20px;column-fill:auto\"><fieldset id=c style='display:block;margin:0;padding:0;border:0;min-width:0'><div id=a>aa</div><div id=b>bb</div><div id=d>cc</div></fieldset></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 200.0, 20.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (0.0, 10.0, 100.0, 10.0)),
+            ("d", (100.0, 0.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "columns_own_margins",
+        group: Group::Columns,
+        body: "<div id=o style=\"columns:2;column-gap:0;width:200px\"><fieldset id=c style='display:block;margin:0;padding:0;border:0;min-width:0;margin:10px 0'><div id=a>aa</div><div id=b>bb</div></fieldset></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 200.0, 20.0)),
+            ("a", (0.0, 10.0, 100.0, 10.0)),
+            ("b", (100.0, 0.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "columns_nested",
+        group: Group::Columns,
+        body: "<div id=o style=\"columns:2;column-gap:0;width:200px\"><fieldset id=c style='display:block;margin:0;padding:0;border:0;min-width:0'><fieldset id=c2 style='display:block;margin:0;padding:0;border:0;min-width:0'><div id=a>aa</div><div id=b>bb</div></fieldset></fieldset></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 200.0, 10.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 0.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "columns_three_columns",
+        group: Group::Columns,
+        body: "<div id=o style=\"columns:2;column-gap:0;width:200px;columns:3\"><fieldset id=c style='display:block;margin:0;padding:0;border:0;min-width:0'><div id=a>aa</div><div id=b>bb</div><div id=d>cc</div><div id=e>dd</div><div id=f>ee</div><div id=g>ff</div></fieldset></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 200.0, 20.0)),
+            ("a", (0.0, 0.0, 66.66, 10.0)),
+            ("b", (0.0, 10.0, 66.66, 10.0)),
+            ("d", (66.67, 0.0, 66.66, 10.0)),
+            ("e", (66.67, 10.0, 66.66, 10.0)),
+            ("f", (133.33, 0.0, 66.66, 10.0)),
+            ("g", (133.33, 10.0, 66.66, 10.0)),
+        ],
+    },
+    Case {
+        name: "columns_user_agent_style",
+        group: Group::Columns,
+        body: "<div id=o style=\"columns:2;column-gap:0;width:200px\"><fieldset id=c><div id=a>aa</div><div id=b>bb</div></fieldset></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 200.0, 18.25)),
+            ("a", (11.5, 5.5, 77.0, 10.0)),
+            ("b", (111.5, 0.0, 77.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "columns_user_agent_style_four_blocks",
+        group: Group::Columns,
+        body: "<div id=o style=\"columns:2;column-gap:0;width:200px\"><fieldset id=c><div id=a>aa</div><div id=b>bb</div><div id=d>cc</div><div id=e>dd</div></fieldset></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 200.0, 28.25)),
+            ("a", (11.5, 5.5, 77.0, 10.0)),
+            ("b", (11.5, 15.5, 77.0, 10.0)),
+            ("d", (111.5, 0.0, 77.0, 10.0)),
+            ("e", (111.5, 10.0, 77.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "columns_user_agent_style_definite_height",
+        group: Group::Columns,
+        body: "<div id=o style=\"columns:2;column-gap:0;width:200px;height:30px\"><fieldset id=c><div id=a>aa</div><div id=b>bb</div><div id=d>cc</div><div id=e>dd</div></fieldset></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 200.0, 30.0)),
+            ("a", (11.5, 5.5, 77.0, 10.0)),
+            ("b", (11.5, 15.5, 77.0, 10.0)),
+            ("d", (111.5, 0.0, 77.0, 10.0)),
+            ("e", (111.5, 10.0, 77.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "columns_min_content_minimum",
+        group: Group::Columns,
+        body: "<div id=o style=\"columns:2;column-gap:0;width:200px\"><fieldset id=c style='margin:0;padding:0;border:0'><div id=a>aa</div><div id=b>bb</div></fieldset></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 200.0, 10.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 0.0, 100.0, 10.0)),
+        ],
+    },
+    // A block with a zero minimum width, which the reset styles of fieldsets
+    // often set, is as wide as its column, as one with an `auto` minimum is.
+    Case {
+        name: "columns_block_with_zero_minimum_width",
+        group: Group::Columns,
+        body: "<div id=o style=\"columns:2;column-gap:0;width:200px\"><div id=c style='min-width:0'><div id=a>aa</div><div id=b>bb</div></div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 200.0, 10.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 0.0, 100.0, 10.0)),
+        ],
+    },
+    // A rendered legend sits over the border, out of the blocks of the
+    // fieldset; here the fieldset fits in the first column.
+    Case {
+        name: "columns_rendered_legend",
+        group: Group::Columns,
+        body: "<div id=o style=\"columns:2;column-gap:0;width:200px\"><fieldset id=c style='margin:0;padding:0;border:0;min-width:0'><legend id=l>L</legend><div id=a>aa</div></fieldset></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 200.0, 20.0)),
+            ("l", (0.0, 0.0, 14.0, 10.0)),
+            ("a", (0.0, 10.0, 100.0, 10.0)),
+        ],
+    },
+    // A legend that renders no box leaves the fieldset with no rendered
+    // legend, so its blocks break between the columns.
+    Case {
+        name: "columns_hidden_legend",
+        group: Group::Columns,
+        body: "<div id=o style=\"columns:2;column-gap:0;width:200px\"><fieldset id=c style='margin:0;padding:0;border:0;min-width:0'><legend id=l style='display:none'>L</legend><div id=a>aa</div><div id=b>bb</div></fieldset></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 200.0, 10.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 0.0, 100.0, 10.0)),
+        ],
+    },
+    // A fieldset whose minimum width, `min-content` from the user agent style,
+    // is wider than its column keeps that width in the column.
+    Case {
+        name: "columns_wider_than_a_column",
+        group: Group::Columns,
+        body: "<div id=o style=\"columns:2;column-gap:0;width:200px\"><fieldset id=c style='margin:0;padding:0;border:0'><div id=a style='width:300px;height:10px'></div><div id=b style='height:10px;width:50%'></div></fieldset></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 200.0, 10.0)),
+            ("a", (0.0, 0.0, 300.0, 10.0)),
+            ("b", (100.0, 0.0, 150.0, 10.0)),
+        ],
+    },
+    // The margins of a fieldset do not collapse with those of its block.
+    Case {
+        name: "columns_margins_around_one_block",
+        group: Group::Columns,
+        body: "<div id=o style=\"columns:2;column-gap:0;width:200px\"><fieldset id=c style='margin:5px 0;padding:0;border:0;min-width:0'><div id=a style='margin:5px 0'>aa</div></fieldset><div id=b>bb</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 200.0, 20.0)),
+            ("a", (0.0, 10.0, 100.0, 10.0)),
+            ("b", (100.0, 0.0, 100.0, 10.0)),
+        ],
+    },
+    // A legend inside a `display: contents` box is not a child of the
+    // fieldset, so it is an ordinary block in the flow of the fieldset.
+    Case {
+        name: "columns_legend_in_contents",
+        group: Group::Columns,
+        body: "<div id=o style=\"columns:2;column-gap:0;width:200px\"><fieldset id=c style='margin:0;padding:0;border:0;min-width:0'><div id=w style='display:contents'><legend id=l>L</legend></div><div id=a>a</div><div id=b>b</div></fieldset></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 200.0, 20.0)),
+            ("l", (0.0, 0.0, 14.0, 10.0)),
+            ("a", (0.0, 10.0, 100.0, 10.0)),
+            ("b", (100.0, 0.0, 100.0, 10.0)),
         ],
     },
 ];
