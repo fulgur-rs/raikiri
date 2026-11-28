@@ -5085,6 +5085,18 @@ impl PaginationState {
                 page = page.max(first_line_page);
                 moved_whole = true;
             }
+            // Lines of atomic inlines before the text can start on an
+            // earlier page than the text does: the lines are judged from the
+            // page the first of them is on, which may move them all.
+            if lines_can_move
+                && first_line_page < page
+                && text_lines
+                    .get(node_id)
+                    .and_then(|owned| owned.lines.first())
+                    .is_some_and(|first| first.line > 0)
+            {
+                page = first_line_page;
+            }
             // Lines a clip hides after a move are left where they are.
             // The lines of a cell of a table that repeats a header or footer
             // group go between the copies of the groups on each page.
@@ -6921,11 +6933,18 @@ impl PaginationState {
                 .record_grown_floats(document, cascade, body_id, candidate, block_id, growth);
             record_lines_beside_grown_floats(document, env, candidate, text, block_id, shift, page);
             note_line_gap(document, cascade, block_id, line, shift);
-            if line == 0 {
-                // The first line moves, and the text that starts on it with it.
+            // Lines of atomic inlines can come before the line the text
+            // starts on: a move from any line up to that one takes the text
+            // down whole.
+            let owned = text_lines.get(candidate.node_id);
+            if line
+                <= owned
+                    .and_then(|owned| owned.lines.first())
+                    .map_or(0, |first| first.line)
+            {
                 text.effective_y += shift;
                 text.first_line_shift += shift;
-            } else if reaches_line(text_lines.get(candidate.node_id), line) {
+            } else if reaches_line(owned, line) {
                 text.height += shift;
             }
             self.deferred_shifts.line_splits.push(LineSplit {
