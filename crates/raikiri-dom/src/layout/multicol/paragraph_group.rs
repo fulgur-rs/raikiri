@@ -1795,10 +1795,9 @@ fn wrapper_start(
     close: usize,
     resume: FlowCursor,
 ) -> Option<(usize, f32)> {
-    if open < resume.paragraph {
-        return None;
-    }
-    (open..close).find_map(|index| {
+    // A wrapper the flow resumed inside started in an earlier fill.
+    let started_here = open >= resume.paragraph;
+    (open..close).filter(|_| started_here).find_map(|index| {
         paragraphs.get(index)?.as_ref()?.extents.first()?;
         let placement = placements
             .get(index.checked_sub(resume.paragraph)?)?

@@ -2689,7 +2689,7 @@ fn record_wrapped_fragments(
             let own = match wrapped.end {
                 Some(end) => {
                     let outer = homes.get(&wrapped.parent_node)?.clone();
-                    push_wrapper_pieces(
+                    let pieces = push_wrapper_pieces(
                         tree,
                         wrapped.node,
                         fragment,
@@ -2698,7 +2698,8 @@ fn record_wrapped_fragments(
                         group.height,
                         context,
                         Some(&outer),
-                    )?
+                    );
+                    pieces?
                 }
                 None => WrapperPieces::single(fragment),
             };
@@ -4984,18 +4985,18 @@ fn layout_column_group(
                     ),
                     None => Some(WrapperPieces::single(child_fragment)),
                 };
-                let Some(pieces) = pieces else {
-                    return fallback_height;
-                };
-                if record_wrapped_fragments(
-                    tree,
-                    group,
-                    local_order,
-                    child_fragment,
-                    pieces,
-                    context,
-                )
-                .is_none()
+                if pieces
+                    .and_then(|pieces| {
+                        record_wrapped_fragments(
+                            tree,
+                            group,
+                            local_order,
+                            child_fragment,
+                            pieces,
+                            context,
+                        )
+                    })
+                    .is_none()
                 {
                     return fallback_height;
                 }

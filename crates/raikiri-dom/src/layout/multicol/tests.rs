@@ -9526,3 +9526,60 @@ fn a_wrapper_whose_minimum_or_maximum_does_not_bind_collapses_margins_through_it
         );
     }
 }
+
+#[test]
+fn the_height_of_a_wrapper_that_starts_a_formatting_context_holds_the_margin_of_its_first_box() {
+    // Chromium: the 20px top margin of the paragraph stays inside the
+    // flow-root wrapper, which starts at the column top and ends its 150px
+    // 50px down the second column.
+    let (doc, wrapper, paragraph, next) = sized_wrapper_columns(
+        TWO_FILLED_COLUMNS,
+        "display:flow-root;height:150px;background:red",
+        "display:block;margin-top:20px",
+        6,
+        1,
+    );
+    assert_eq!(
+        fragment_rects(&doc, wrapper),
+        [(0, 0.0, 0.0, 100.0), (1, 100.0, 0.0, 50.0)]
+    );
+    assert_eq!(paragraph_pieces(&doc, paragraph).0, [(0, 6, 0)]);
+    assert_eq!(paragraph_pieces(&doc, next).0, [(0, 1, 1)]);
+}
+
+#[test]
+fn a_percentage_height_of_a_wrapper_in_one_with_an_auto_height_follows_its_boxes() {
+    // Chromium: 50% of the outer wrapper's auto height computes to auto, so
+    // the inner wrapper is as tall as its 12 lines, 20px into the second
+    // column.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Some("margin:0;font:10px/10px Ahem;orphans:1;widows:1"),
+    );
+    let container = doc.append_element(Some(body), "div", Some(TWO_FILLED_COLUMNS));
+    let outer = doc.append_element(Some(container), "div", Some("display:block"));
+    let inner = doc.append_element(
+        Some(outer),
+        "div",
+        Some("display:block;height:50%;background:red"),
+    );
+    let paragraph = doc.append_element(Some(inner), "div", Some("display:block"));
+    for line in 0..12 {
+        doc.append_text(paragraph, "x");
+        if line < 11 {
+            doc.append_element(Some(paragraph), "br", None::<&str>);
+        }
+    }
+    lay_out_in_ahem(&mut doc, 800.0, 600.0);
+    assert_eq!(
+        fragment_rects(&doc, inner),
+        [(0, 0.0, 0.0, 100.0), (1, 100.0, 0.0, 20.0)]
+    );
+    assert_eq!(
+        paragraph_pieces(&doc, paragraph).0,
+        [(0, 10, 0), (10, 12, 1)]
+    );
+}
