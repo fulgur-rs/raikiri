@@ -299,10 +299,15 @@ fn is_empty_block_with_inline_margins(tree: &LayoutSession<'_>, child: usize) ->
 fn is_plain_wrapper_ignoring_insets(tree: &LayoutSession<'_>, child: usize) -> bool {
     let style = style_of(tree, child);
     let margin = style.margin();
+    // A margin is linear in the width of its containing block, so one that
+    // is not negative for no width and for a very wide one is not negative
+    // for any width.
     let not_negative = |value: LengthPercentageAuto| {
-        value
-            .maybe_resolve(Some(1.0))
-            .is_none_or(|px: f32| px >= 0.0)
+        [0.0, 1.0e9].into_iter().all(|basis: f32| {
+            value
+                .maybe_resolve(Some(basis))
+                .is_none_or(|px: f32| px >= 0.0)
+        })
     };
     block_margins_beside_inline(&style).is_some()
         && not_negative(margin.left)

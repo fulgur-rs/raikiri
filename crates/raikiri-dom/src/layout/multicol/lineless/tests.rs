@@ -879,6 +879,45 @@ fn balance_all_stops_balancing_rows_once_its_probes_use_up_the_budget() {
     assert_eq!(heights[1], 100.0);
 }
 
+#[test]
+fn a_wrapper_enters_the_stream_only_with_inline_margins_that_are_never_negative() {
+    for (css, enters) in [
+        ("", true),
+        ("margin-left:5px", true),
+        ("margin:0 auto;width:30px", true),
+        ("margin-right:10%", true),
+        ("margin-left:-5px", false),
+        ("margin-right:-10%", false),
+        // Positive in a narrow wrapper, negative in a wide one.
+        ("margin-left:calc(5px - 20%)", false),
+        ("margin-left:calc(20% - 5px)", false),
+        ("margin-left:calc(5px + 20%)", true),
+    ] {
+        let mut doc = crate::Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Some("display:block;width:100px;columns:2"),
+        );
+        let wrapper = doc.append_element(
+            Some(container),
+            "div",
+            Some(format!("display:block;{css}").as_str()),
+        );
+        doc.append_element(Some(wrapper), "div", Some("display:block;height:10px"));
+        doc.mark_in_document_flags();
+        assert_eq!(
+            crate::layout::test_support::with_bridged_session(&mut doc, |session| {
+                super::is_plain_wrapper_ignoring_insets(session, wrapper)
+            }),
+            enters,
+            "{css}"
+        );
+    }
+}
+
 mod absolute_parent_tests;
 mod parent_column_tests;
 
