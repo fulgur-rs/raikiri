@@ -6618,6 +6618,37 @@ fn a_block_that_starts_the_columns_keeps_its_top_margin() {
 }
 
 #[test]
+fn a_block_that_starts_the_columns_keeps_a_negative_top_margin() {
+    // Values match Chromium.
+    let (mut doc, container, boxes) = column_container(
+        "height:200px;column-fill:auto",
+        &[
+            Part::Box("display:block;height:20px;margin-top:-10px"),
+            Part::Lines(2),
+        ],
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 260.0);
+    assert_eq!(box_rect(&doc, boxes[0]), (0.0, -10.0, 40.0, 20.0));
+    assert_eq!(column_ranges(&doc, container), [(0, 2, 0, 0.0, 10.0)]);
+}
+
+#[test]
+fn an_empty_block_that_starts_the_columns_leaves_its_margins_below_it() {
+    // The margins of the empty block collapse through it, so it stays at the
+    // top and the lines start 30px down. Values match Chromium.
+    let (mut doc, container, boxes) = column_container(
+        "height:200px;column-fill:auto",
+        &[
+            Part::Box("display:block;margin-bottom:30px"),
+            Part::Lines(2),
+        ],
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 260.0);
+    assert_eq!(box_rect(&doc, boxes[0]), (0.0, 0.0, 40.0, 0.0));
+    assert_eq!(column_ranges(&doc, container), [(0, 2, 0, 0.0, 30.0)]);
+}
+
+#[test]
 fn a_block_that_starts_the_group_below_a_spanner_keeps_its_top_margin() {
     // The spanner's 5px bottom margin and the block's 30px top margin do not
     // collapse. Values match Chromium.

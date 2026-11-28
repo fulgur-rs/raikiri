@@ -1728,9 +1728,11 @@ fn run_boxes_segment(
                     bottom,
                     end: (block.next_y + block.pending.resolve()).max(bottom),
                     first_baseline: block.first_baseline,
+                    // The margins of a box collapsed through come below it.
                     top_margin: block
                         .top_margin
-                        .map_or(0.0, |margin| margin.resolve().max(0.0)),
+                        .filter(|_| !block.collapses_through)
+                        .map_or(0.0, |margin| margin.resolve()),
                 });
                 (y, pending) = (block.next_y, block.pending);
                 block_ends.push((node.0 as usize, lines.len(), y + pending.resolve()));
