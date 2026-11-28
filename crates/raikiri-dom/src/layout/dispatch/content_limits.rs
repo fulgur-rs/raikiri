@@ -598,18 +598,16 @@ fn vertical_block_bounds(
 ) -> Bounds {
     let idx = usize::from(node_id);
     // Browsers measure an intrinsic keyword along the block axis of a flex
-    // container whose main axis is its inline axis at the stated block size,
-    // which the line stretches to fill, and so leave such a container its
-    // stated size. A grid container keeps its stated size against a keyword
+    // container whose main axis is its inline axis at the block size it
+    // states, which the line stretches to fill, and so leave such a container
+    // that size. A grid container keeps a stated size against a keyword
     // maximum, `width:300px;max-width:min-content` stays 300px wide, but grows
     // to the block size of its content for a keyword minimum. Those keywords
-    // that leave the stated size are left unresolved here.
-    let flex_grid = is_flex_grid_container(tree, idx);
-    let row_flex = flex_grid
-        && tree.nodes[idx].layout_display() == Display::Flex
-        && tree.physical_style(idx).flex_direction_is_row();
-    let grid = flex_grid && tree.nodes[idx].layout_display() != Display::Flex;
-    let keeps_stated = |maximum: bool| row_flex || (grid && maximum);
+    // that leave the stated size are left unresolved here. Without a stated
+    // size, as when a flex line grows or shrinks the box, the keywords stand
+    // for the block size of its content.
+    let keeps = keeps_definite_size(tree, idx, false);
+    let keeps_stated = |maximum: bool| keeps[usize::from(maximum)];
     let is_measured = |size: Dimension, maximum: bool| {
         !size.is_auto() && !is_stretch(size) && !keeps_stated(maximum)
     };
@@ -663,6 +661,125 @@ fn vertical_block_bounds(
         min: bound(tree, limits.min.width, false),
         max: bound(tree, limits.max.width, true),
     }
+}
+
+/// Whether the flex or grid container `idx` keeps its definite size along its
+/// physical height (`height`) or width against a keyword minimum and a keyword
+/// maximum, in that order.
+///
+/// Browsers measure an intrinsic keyword along the block axis of such a
+/// container at that size. A flex container whose main axis is its inline axis
+/// stretches the items that align with `stretch` or `normal` to fill its single
+/// line, and so keeps the size against both keywords when one of its items
+/// does. A grid container stretches its rows with an `auto` maximum to fill
+/// the size under `align-content: normal` or `stretch`, but still grows to the
+/// size of its content, and so keeps the size against a maximum when it has
+/// such a row.
+fn keeps_definite_size(tree: &LayoutSession<'_>, idx: usize, height: bool) -> [bool; 2] {
+    use raikiri_layout_style::values::AlignContentKeyword;
+    if !has_definite_size(tree, idx, height) {
+        return [false; 2];
+    }
+    let style = tree.physical_style(idx);
+    let items = tree
+        .child_ids(NodeId::from(idx))
+        .map(usize::from)
+        .filter(|&child| !tree.nodes[child].is_display_none() && !is_oof_box(tree, child));
+    if tree.nodes[idx].layout_display() != Display::Flex {
+        let rows_stretch = matches!(
+            style.align_content().keyword,
+            AlignContentKeyword::Normal | AlignContentKeyword::Stretch
+        ) && crate::layout::taffy_adapter::some_row_stretches(
+            &style,
+            items.map(|item| tree.physical_style(item)),
+        );
+        return [false, rows_stretch];
+    }
+    if !style.flex_direction_is_row() || style.flex_wraps() {
+        return [false; 2];
+    }
+    // The main axis is the inline axis: across it lies the physical height of
+    // a horizontal container and the physical width of a vertical one.
+    let mut items = items;
+    let stretched = items.any(|item| {
+        let item_style = tree.physical_style(item);
+        let size = item_style.size();
+        let across = if height { size.height } else { size.width };
+        across.is_auto() && alignment_stretches(&style, &item_style, height)
+    });
+    [stretched; 2]
+}
+
+/// Whether the flex or grid container `idx` has a size along its physical
+/// height (`height`) or width that does not come from its content: a stated
+/// size, a `stretch` size, the size between two insets of an out-of-flow box,
+/// or the size across a flex line or along a grid area that its parent
+/// stretches it to. A size along the main axis of a parent flex container
+/// comes from the flex line, which grows or shrinks the box from its content.
+fn has_definite_size(tree: &LayoutSession<'_>, idx: usize, height: bool) -> bool {
+    use raikiri_layout_style::values::AlignItemsKeyword;
+    if !is_flex_grid_container(tree, idx) {
+        return false;
+    }
+    let item = tree.physical_style(idx);
+    let oof = is_oof_box(tree, idx);
+    let parent = tree.taffy_parent_of(idx).filter(|_| !oof);
+    // The axes of a parent in a vertical writing mode are turned: its rows and
+    // its block axis run along the physical width.
+    let vertical_parent =
+        parent.is_some_and(|parent| super::block_right_to_left(tree, parent).is_some());
+    let flex_parent = parent.filter(|&parent| tree.nodes[parent].layout_display() == Display::Flex);
+    let main_is_width = flex_parent
+        .map(|parent| tree.physical_style(parent).flex_direction_is_row() != vertical_parent);
+    if main_is_width.is_some_and(|main_is_width| main_is_width != height) {
+        return false;
+    }
+    let stated = if height {
+        item.size().height
+    } else {
+        item.size().width
+    };
+    if !stated.is_auto() {
+        return true;
+    }
+    let margin = item.margin();
+    let (start, end) = if height {
+        (margin.top, margin.bottom)
+    } else {
+        (margin.left, margin.right)
+    };
+    let stretches = |alignment: Option<raikiri_layout_style::values::AlignSelf>, fallback| {
+        matches!(
+            alignment.unwrap_or(fallback).keyword,
+            AlignItemsKeyword::Normal | AlignItemsKeyword::Stretch
+        )
+    };
+    if oof {
+        let inset = item.inset();
+        let (alignment, inset_start, inset_end) = if height {
+            (item.bridge_align_self(), inset.top, inset.bottom)
+        } else {
+            (item.bridge_justify_self(), inset.left, inset.right)
+        };
+        return !inset_start.is_auto()
+            && !inset_end.is_auto()
+            && stretches(alignment, raikiri_layout_style::values::AlignSelf::NORMAL);
+    }
+    parent.is_some_and(|parent| {
+        let container = tree.physical_style(parent);
+        if let Some(main_is_width) = main_is_width {
+            return alignment_stretches(&container, &item, main_is_width);
+        }
+        let alignment = if height != vertical_parent {
+            stretches(item.bridge_align_self(), container.align_items())
+        } else {
+            stretches(item.bridge_justify_self(), container.justify_items())
+        };
+        tree.nodes[parent].formatting_context == FormattingContext::Grid
+            && alignment
+            && !start.is_auto()
+            && !end.is_auto()
+    })
 }
 
 /// Lay out an out-of-flow box whose containing block is an inline element.
@@ -4085,21 +4202,28 @@ fn height_bounds(
 ) -> Bounds {
     let idx = usize::from(node_id);
     let stretch = stretch_limit_height(tree, idx, inputs);
-    let is_measured = |size: Dimension| !size.is_auto() && !is_stretch(size);
-    let measured = (is_measured(limits.min.height) || is_measured(limits.max.height))
+    // A flex container whose main axis is horizontal, or a grid container
+    // against a keyword maximum, keeps a stated height, as along the block
+    // axis of a vertical box (see `vertical_block_bounds`).
+    let keeps = keeps_definite_size(tree, idx, true);
+    let keeps_stated = |maximum: bool| keeps[usize::from(maximum)];
+    let is_measured = |size: Dimension, maximum: bool| {
+        !size.is_auto() && !is_stretch(size) && !keeps_stated(maximum)
+    };
+    let measured = (is_measured(limits.min.height, false) || is_measured(limits.max.height, true))
         .then(|| automatic_height(tree, node_id, inputs, width));
-    let bound = |size: Dimension| {
+    let bound = |size: Dimension, maximum: bool| {
         if is_stretch(size) {
             stretch
-        } else if size.is_auto() {
+        } else if size.is_auto() || keeps_stated(maximum) {
             None
         } else {
             measured
         }
     };
     Bounds {
-        min: bound(limits.min.height),
-        max: bound(limits.max.height),
+        min: bound(limits.min.height, false),
+        max: bound(limits.max.height, true),
     }
 }
 

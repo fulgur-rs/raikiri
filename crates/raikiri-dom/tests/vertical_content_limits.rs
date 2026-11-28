@@ -388,6 +388,337 @@ fn a_wrapping_column_keeps_its_stated_height_when_its_items_are_not_measured_alo
 }
 
 #[test]
+fn a_flex_or_grid_container_keeps_a_stated_block_size_against_a_keyword_limit() {
+    // A flex container whose main axis is its inline axis keeps the block
+    // size it states against any keyword limit, and a grid container against
+    // a keyword maximum, horizontal or vertical.
+    #[rustfmt::skip]
+    assert_bodies(&[
+        ("<div><div id=b style='display:grid;width:20px;height:100px;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div><div id=b style='display:grid;width:20px;height:100px;max-height:max-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div><div id=b style='display:grid;width:20px;height:100px;max-height:fit-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div><div id=b style='display:flex;width:20px;height:5px;min-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 5.0)),
+        ("<div><div id=b style='display:flex;width:20px;height:5px;min-height:max-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 5.0)),
+        ("<div><div id=b style='display:flex;width:20px;height:5px;min-height:fit-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 5.0)),
+        ("<div><div id=b style='display:flex;width:20px;height:100px;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div><div id=b style='display:flex;width:20px;height:100px;max-height:max-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div><div id=b style='display:flex;width:20px;height:100px;max-height:fit-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div><div id=b style='display:inline-grid;width:20px;height:100px;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div><div id=b style='display:inline-grid;width:20px;height:100px;max-height:max-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div><div id=b style='display:inline-grid;width:20px;height:100px;max-height:fit-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div><div id=b style='display:inline-flex;width:20px;height:5px;min-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 5.0)),
+        ("<div><div id=b style='display:inline-flex;width:20px;height:5px;min-height:max-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 5.0)),
+        ("<div><div id=b style='display:inline-flex;width:20px;height:5px;min-height:fit-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 5.0)),
+        ("<div><div id=b style='display:inline-flex;width:20px;height:100px;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div><div id=b style='display:inline-flex;width:20px;height:100px;max-height:max-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div><div id=b style='display:inline-flex;width:20px;height:100px;max-height:fit-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div style='height:200px'><div id=b style='display:grid;width:20px;height:50%;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div style='height:200px'><div id=b style='display:grid;width:20px;height:50%;max-height:max-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div style='height:200px'><div id=b style='display:grid;width:20px;height:50%;max-height:fit-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div style='height:200px'><div id=b style='display:flex;width:20px;height:50%;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div style='height:200px'><div id=b style='display:flex;width:20px;height:50%;max-height:max-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div style='height:200px'><div id=b style='display:flex;width:20px;height:50%;max-height:fit-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+    ]);
+}
+
+#[test]
+fn a_flex_or_grid_container_keeps_a_stretched_block_size_against_a_keyword_limit() {
+    // The size a flex line or a grid area stretches the container to holds
+    // as a stated one does, in horizontal and vertical parents.
+    #[rustfmt::skip]
+    assert_bodies(&[
+        ("<div style='display:flex;height:200px'><div id=b style='display:grid;width:20px;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='display:flex;height:200px'><div id=b style='display:grid;width:20px;max-height:max-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='display:flex;height:200px'><div id=b style='display:grid;width:20px;max-height:fit-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='display:flex;height:200px'><div id=b style='display:flex;width:20px;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='display:flex;height:200px'><div id=b style='display:flex;width:20px;max-height:max-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='display:flex;height:200px'><div id=b style='display:flex;width:20px;max-height:fit-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='display:flex;width:200px'><div id=b style='writing-mode:vertical-lr;display:grid;height:20px;flex-grow:1;max-width:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div style='display:flex;width:200px'><div id=b style='writing-mode:vertical-lr;display:grid;height:20px;flex-grow:1;max-width:max-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div style='display:flex;width:200px'><div id=b style='writing-mode:vertical-lr;display:flex;height:20px;flex-grow:1;max-width:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 10.0, 20.0)),
+        ("<div style='display:flex;width:200px'><div id=b style='writing-mode:vertical-lr;display:flex;height:20px;flex-grow:1;max-width:max-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 10.0, 20.0)),
+        ("<div style='display:grid;height:200px;grid-template-columns:20px'><div id=b style='display:grid;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='display:flex;flex-wrap:wrap;height:200px;align-content:stretch'><div id=b style='display:grid;width:20px;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='display:grid;height:200px;grid-template-columns:20px'><div id=b style='display:grid;max-height:max-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='display:flex;flex-wrap:wrap;height:200px;align-content:stretch'><div id=b style='display:grid;width:20px;max-height:max-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='display:grid;height:200px;grid-template-columns:20px'><div id=b style='display:flex;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='display:flex;flex-wrap:wrap;height:200px;align-content:stretch'><div id=b style='display:flex;width:20px;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='display:grid;height:200px;grid-template-columns:20px'><div id=b style='display:flex;max-height:max-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='display:flex;flex-wrap:wrap;height:200px;align-content:stretch'><div id=b style='display:flex;width:20px;max-height:max-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='writing-mode:vertical-lr;display:grid;height:200px;grid-template-rows:20px'><div id=b style='writing-mode:horizontal-tb;display:grid;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='writing-mode:vertical-lr;display:grid;height:200px;grid-template-rows:20px'><div id=b style='writing-mode:horizontal-tb;display:grid;max-height:max-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='writing-mode:vertical-lr;display:grid;height:200px;grid-template-rows:20px'><div id=b style='writing-mode:horizontal-tb;display:flex;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='writing-mode:vertical-lr;display:grid;height:200px;grid-template-rows:20px'><div id=b style='writing-mode:horizontal-tb;display:flex;max-height:max-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+    ]);
+}
+
+#[test]
+fn a_flex_or_grid_container_sized_by_a_flex_line_takes_its_content_for_a_keyword_limit() {
+    // Without a stated or stretched block size, as when a flex line grows or
+    // shrinks it, a keyword limit stands for the block size of its content.
+    #[rustfmt::skip]
+    assert_bodies(&[
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:grid;width:20px;flex-grow:1;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div style='display:flex;flex-direction:column;height:5px'><div id=b style='display:grid;width:20px;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:grid;width:20px;flex-grow:1;max-height:fit-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div style='display:flex;flex-direction:column;height:5px'><div id=b style='display:grid;width:20px;max-height:fit-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:grid;width:20px;flex-grow:1;min-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='display:flex;flex-direction:column;height:5px'><div id=b style='display:grid;width:20px;min-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:grid;width:20px;flex-grow:1;min-height:fit-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='display:flex;flex-direction:column;height:5px'><div id=b style='display:grid;width:20px;min-height:fit-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:flex;width:20px;flex-grow:1;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 10.0)),
+        ("<div style='display:flex;flex-direction:column;height:5px'><div id=b style='display:flex;width:20px;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 10.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:flex;width:20px;flex-grow:1;max-height:fit-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 10.0)),
+        ("<div style='display:flex;flex-direction:column;height:5px'><div id=b style='display:flex;width:20px;max-height:fit-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 10.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:flex;width:20px;flex-grow:1;min-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='display:flex;flex-direction:column;height:5px'><div id=b style='display:flex;width:20px;min-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 10.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:flex;width:20px;flex-grow:1;min-height:fit-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='display:flex;flex-direction:column;height:5px'><div id=b style='display:flex;width:20px;min-height:fit-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 10.0)),
+        ("<div style='display:flex;width:5px'><div id=b style='writing-mode:vertical-lr;display:grid;height:20px;max-width:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div style='display:flex;width:200px'><div id=b style='writing-mode:vertical-lr;display:grid;height:20px;flex-grow:1;min-width:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 200.0, 20.0)),
+        ("<div style='display:flex;width:5px'><div id=b style='writing-mode:vertical-lr;display:grid;height:20px;min-width:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div style='display:flex;width:5px'><div id=b style='writing-mode:vertical-lr;display:flex;height:20px;max-width:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 10.0, 20.0)),
+        ("<div style='display:flex;width:200px'><div id=b style='writing-mode:vertical-lr;display:flex;height:20px;flex-grow:1;min-width:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 200.0, 20.0)),
+        ("<div style='display:flex;width:5px'><div id=b style='writing-mode:vertical-lr;display:flex;height:20px;min-width:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 10.0, 20.0)),
+    ]);
+}
+
+#[test]
+fn a_flex_or_grid_container_keeps_only_a_size_its_content_fills() {
+    // A flex line sizes the main axis of an item from its content, an
+    // out-of-flow box between two insets or with `height:stretch` keeps that
+    // size, a flex container keeps it only when an item stretches across its
+    // line, and a grid container only when its rows size to their content.
+    // An item aligned to `start` is not stretched.
+    #[rustfmt::skip]
+    assert_bodies(&[
+        ("<div style='display:flex;height:200px;position:relative'><div id=b style='position:absolute;top:0;bottom:0;width:20px;display:grid;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='height:200px;position:relative'><div id=b style='position:absolute;top:0;bottom:0;width:20px;display:grid;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:grid;width:20px;height:50px;flex-grow:1;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:flex;width:20px;height:50px;flex-grow:1;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 10.0)),
+        ("<div style='display:flex;flex-direction:column;min-height:200px'><div id=b style='display:grid;width:20px;height:50%;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div style='min-height:200px'><div id=b style='display:grid;width:20px;height:50%;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div style='display:flex'><div id=b style='display:grid;width:20px;max-height:min-content'><div>xx</div><div>yyyy</div></div><div style='width:20px;height:150px'></div></div>", (8.0, 8.0, 20.0, 150.0)),
+        ("<div style='display:flex'><div id=b style='display:flex;width:20px;max-height:min-content'><div>xx</div><div>yyyy</div></div><div style='width:20px;height:150px'></div></div>", (8.0, 8.0, 20.0, 150.0)),
+        ("<div style='display:flex;flex-wrap:wrap;height:200px;align-content:flex-start'><div id=b style='display:grid;width:20px;max-height:min-content'><div>xx</div><div>yyyy</div></div><div style='width:20px;height:150px'></div></div>", (8.0, 8.0, 20.0, 150.0)),
+        ("<div style='display:flex;height:200px'><div id=b style='display:grid;width:20px;height:stretch;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='display:flex;height:200px'><div id=b style='display:grid;width:20px;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='display:grid;height:200px;grid-template-columns:20px'><div id=b style='display:grid;aspect-ratio:1/10;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='display:grid;height:200px;grid-template-columns:20px'><div id=b style='display:flex;aspect-ratio:1/10;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='columns:2;width:300px'><div style='writing-mode:vertical-lr;display:flex;width:200px'><div id=b style='display:grid;height:20px;max-width:min-content'><div>xx</div><div>yyyy</div></div></div></div>", (8.0, 8.0, 200.0, 20.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:grid;width:20px;height:100px;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:grid;width:20px;height:100px;min-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:grid;width:20px;height:100px;flex-shrink:0;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:grid;width:20px;height:100px;flex-shrink:0;min-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:grid;width:20px;height:300px;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:grid;width:20px;height:300px;min-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:grid;width:20px;height:100px;flex-grow:1;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:grid;width:20px;height:100px;flex-grow:1;min-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:grid;width:20px;flex-basis:100px;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:grid;width:20px;flex-basis:100px;min-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:grid;width:20px;height:stretch;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:grid;width:20px;height:stretch;min-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='height:200px'><div id=b style='display:grid;width:20px;height:stretch;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='height:200px;position:relative'><div id=b style='position:absolute;top:0;width:20px;display:grid;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div style='height:200px;position:relative'><div id=b style='position:absolute;top:0;bottom:0;width:20px;display:grid;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='height:200px;position:relative'><div id=b style='position:absolute;top:0;height:100px;width:20px;display:grid;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div style='height:200px'><div id=b style='display:grid;width:20px;height:stretch;min-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='height:200px;position:relative'><div id=b style='position:absolute;top:0;width:20px;display:grid;min-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div style='height:200px;position:relative'><div id=b style='position:absolute;top:0;bottom:0;width:20px;display:grid;min-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='height:200px;position:relative'><div id=b style='position:absolute;top:0;height:100px;width:20px;display:grid;min-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:flex;width:20px;height:100px;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 10.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:flex;width:20px;height:100px;min-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:flex;width:20px;height:100px;flex-shrink:0;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 10.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:flex;width:20px;height:100px;flex-shrink:0;min-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:flex;width:20px;height:300px;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 10.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:flex;width:20px;height:300px;min-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:flex;width:20px;height:100px;flex-grow:1;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 10.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:flex;width:20px;height:100px;flex-grow:1;min-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:flex;width:20px;flex-basis:100px;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 10.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:flex;width:20px;flex-basis:100px;min-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:flex;width:20px;height:stretch;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 10.0)),
+        ("<div style='display:flex;flex-direction:column;height:200px'><div id=b style='display:flex;width:20px;height:stretch;min-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='height:200px'><div id=b style='display:flex;width:20px;height:stretch;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='height:200px;position:relative'><div id=b style='position:absolute;top:0;width:20px;display:flex;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 10.0)),
+        ("<div style='height:200px;position:relative'><div id=b style='position:absolute;top:0;bottom:0;width:20px;display:flex;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='height:200px;position:relative'><div id=b style='position:absolute;top:0;height:100px;width:20px;display:flex;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div style='height:200px'><div id=b style='display:flex;width:20px;height:stretch;min-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='height:200px;position:relative'><div id=b style='position:absolute;top:0;width:20px;display:flex;min-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 10.0)),
+        ("<div style='height:200px;position:relative'><div id=b style='position:absolute;top:0;bottom:0;width:20px;display:flex;min-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 200.0)),
+        ("<div style='height:200px;position:relative'><div id=b style='position:absolute;top:0;height:100px;width:20px;display:flex;min-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:flex;align-items:flex-start;width:40px;height:0;min-height:min-content'><div style='display:block;flex:1 1 auto'>AAAA BBBB</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:flex;align-items:flex-start;width:40px;height:100px;max-height:min-content'><div style='display:block;flex:1 1 auto'>AAAA BBBB</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:flex;align-items:flex-start;width:40px;height:0;min-height:max-content'><div style='display:block;flex:1 1 auto'>AAAA BBBB</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:flex;align-items:flex-start;width:40px;height:100px;max-height:max-content'><div style='display:block;flex:1 1 auto'>AAAA BBBB</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:flex;align-items:flex-start;width:40px;height:0;min-height:fit-content'><div style='display:block;flex:1 1 auto'>AAAA BBBB</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:flex;align-items:flex-start;width:40px;height:100px;max-height:fit-content'><div style='display:block;flex:1 1 auto'>AAAA BBBB</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:grid;grid-template-columns:auto;grid-template-rows:auto;justify-items:start;align-items:start;width:40px;height:0;min-height:min-content'><div style='display:block;grid-column:1;grid-row:1'>AAAA BBBB</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:grid;grid-template-columns:auto;grid-template-rows:auto;justify-items:start;align-items:start;width:40px;height:100px;max-height:min-content'><div style='display:block;grid-column:1;grid-row:1'>AAAA BBBB</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;grid-template-columns:auto;grid-template-rows:auto;justify-items:start;align-items:start;width:40px;height:0;min-height:max-content'><div style='display:block;grid-column:1;grid-row:1'>AAAA BBBB</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:grid;grid-template-columns:auto;grid-template-rows:auto;justify-items:start;align-items:start;width:40px;height:100px;max-height:max-content'><div style='display:block;grid-column:1;grid-row:1'>AAAA BBBB</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;grid-template-columns:auto;grid-template-rows:auto;justify-items:start;align-items:start;width:40px;height:0;min-height:fit-content'><div style='display:block;grid-column:1;grid-row:1'>AAAA BBBB</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:grid;grid-template-columns:auto;grid-template-rows:auto;justify-items:start;align-items:start;width:40px;height:100px;max-height:fit-content'><div style='display:block;grid-column:1;grid-row:1'>AAAA BBBB</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div style='display:flex;flex-direction:row;align-items:flex-start;width:200px;height:100px'><div id=b style='flex:none;display:grid;width:40px;height:0;min-height:max-content;grid-template-columns:auto;grid-template-rows:auto;justify-items:start;align-items:start'>AAAA BBBB</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div style='display:grid;width:60px;height:100px;grid-template-columns:60px;grid-template-rows:100px;justify-items:start;align-items:start'><div id=b style='grid-column:1;grid-row:1;display:flex;width:40px;height:0;min-height:max-content;align-items:flex-start'>AAAA BBBB</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:grid;width:100px;grid-template-rows:100px;height:auto'></div>", (8.0, 8.0, 100.0, 100.0)),
+        ("<div id=b style='display:grid;width:100px;grid-template-rows:100px;height:0;min-height:max-content'></div>", (8.0, 8.0, 100.0, 100.0)),
+        ("<div id=b style='display:grid;width:100px;grid-template-rows:100px;height:200px;max-height:max-content'></div>", (8.0, 8.0, 100.0, 100.0)),
+        ("<div style='display:grid;height:200px;grid-template-columns:20px'><div id=b style='display:grid;align-self:start;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div style='display:grid;width:200px;grid-template-rows:20px'><div id=b style='writing-mode:vertical-lr;display:grid;justify-self:start;max-width:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div style='height:200px;position:relative'><div id=b style='position:absolute;top:0;bottom:0;align-self:start;width:20px;display:grid;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div style='height:200px'><div id=b style='display:grid;width:20px;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div style='display:grid;height:200px;grid-template-columns:20px'><div id=b style='display:flex;align-self:start;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 10.0)),
+        ("<div style='display:grid;width:200px;grid-template-rows:20px'><div id=b style='writing-mode:vertical-lr;display:flex;justify-self:start;max-width:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 10.0, 20.0)),
+        ("<div style='height:200px;position:relative'><div id=b style='position:absolute;top:0;bottom:0;align-self:start;width:20px;display:flex;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 10.0)),
+        ("<div style='height:200px'><div id=b style='display:flex;width:20px;max-height:min-content'><div>xx</div><div>yyyy</div></div></div>", (8.0, 8.0, 20.0, 10.0)),
+    ]);
+}
+
+#[test]
+fn a_grid_keeps_its_height_against_a_keyword_maximum_only_with_a_row_that_stretches() {
+    // `align-content: normal` stretches only the rows with an `auto` maximum,
+    // explicit or implicit, to fill the stated height; other rows leave the
+    // grid the height of its tracks. A column flow adds columns, not rows,
+    // and an implicit row takes only the `grid-auto-rows` entry it reaches.
+    #[rustfmt::skip]
+    assert_bodies(&[
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:min-content;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:min-content;min-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:max-content;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:max-content;min-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-auto-rows:min-content;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-auto-rows:min-content;min-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:auto;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:auto;min-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:minmax(0,auto);max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:minmax(0,auto);min-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:fit-content(50px);max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:fit-content(50px);min-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:minmax(min-content,max-content);max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:minmax(min-content,max-content);min-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:auto min-content;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:auto min-content;min-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:30px;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:30px;max-height:min-content'></div>", (8.0, 8.0, 20.0, 30.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:30px 30px;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 60.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:30px 30px;max-height:min-content'></div>", (8.0, 8.0, 20.0, 60.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-auto-rows:30px;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 60.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-auto-rows:30px;max-height:min-content'></div>", (8.0, 8.0, 20.0, 0.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-auto-rows:max-content;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-auto-rows:max-content;max-height:min-content'></div>", (8.0, 8.0, 20.0, 0.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-auto-rows:auto;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-auto-rows:auto;max-height:min-content'></div>", (8.0, 8.0, 20.0, 0.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-auto-rows:minmax(0,auto);max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-auto-rows:minmax(0,auto);max-height:min-content'></div>", (8.0, 8.0, 20.0, 0.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-auto-rows:fit-content(50px);max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-auto-rows:fit-content(50px);max-height:min-content'></div>", (8.0, 8.0, 20.0, 0.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:min-content;grid-auto-rows:min-content;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:min-content;grid-auto-rows:min-content;max-height:min-content'></div>", (8.0, 8.0, 20.0, 0.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:min-content min-content;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:min-content min-content;max-height:min-content'></div>", (8.0, 8.0, 20.0, 0.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-auto-rows:minmax(min-content,max-content);max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-auto-rows:minmax(min-content,max-content);max-height:min-content'></div>", (8.0, 8.0, 20.0, 0.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:min-content;align-content:start;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:min-content;align-content:start;max-height:min-content'></div>", (8.0, 8.0, 20.0, 0.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:auto;align-content:start;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:auto;align-content:start;max-height:min-content'></div>", (8.0, 8.0, 20.0, 0.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;align-content:start;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;align-content:start;max-height:min-content'></div>", (8.0, 8.0, 20.0, 0.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:repeat(2,min-content);max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 20.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:repeat(1,auto);max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:min-content;grid-template-columns:repeat(2,10px);max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 10.0)),
+        ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:min-content;grid-template-columns:repeat(auto-fill,10px);max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 10.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;grid-auto-flow:column;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-auto-flow:column;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template-rows:20px;grid-auto-flow:column dense;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template-rows:min-content;grid-auto-flow:column;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 40.0, 10.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template-rows:repeat(auto-fill,minmax(20px,auto));max-height:min-content'><div>xx</div><div>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-auto-rows:20px auto;max-height:min-content'><div>xx</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-auto-rows:20px auto;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-auto-rows:auto 20px;max-height:min-content'><div>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-auto-rows:20px 30px auto;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 40.0, 50.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-auto-rows:20px 30px auto;max-height:min-content'><div>xx</div><div>yyyy</div><div>z</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template-rows:5px;grid-auto-rows:20px auto;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 40.0, 25.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template-rows:5px;grid-auto-rows:20px auto;max-height:min-content'><div>xx</div><div>yyyy</div><div>z</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template-columns:20px 20px;grid-auto-rows:20px auto;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template-columns:20px 20px;grid-auto-rows:20px auto;max-height:min-content'><div>xx</div><div>yyyy</div><div>z</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template-columns:repeat(auto-fill,20px);grid-auto-rows:20px auto;max-height:min-content'><div>xx</div><div>yyyy</div><div>z</div></div>", (8.0, 8.0, 40.0, 100.0)),
+    ]);
+}
+
+#[test]
+fn a_grid_counts_the_implicit_rows_its_placed_items_bring_in() {
+    // An item placed on a numbered row line brings in the implicit rows up
+    // to it, before or after the explicit grid, and leaves fewer explicit
+    // cells for the items placed automatically.
+    #[rustfmt::skip]
+    assert_bodies(&[
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-area:1/1'>xx</div><div style='grid-area:1/1'>yyyy</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-row:1'>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-row:2'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-row:3'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;grid-auto-rows:10px auto;max-height:min-content'><div style='grid-row:2'>xx</div></div>", (8.0, 8.0, 40.0, 30.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;grid-auto-rows:10px auto;max-height:min-content'><div style='grid-row:3'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;grid-auto-rows:10px auto;max-height:min-content'><div style='grid-row:2/span 2'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-row:-3'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;grid-auto-rows:auto 10px;max-height:min-content'><div style='grid-row:-3'>xx</div></div>", (8.0, 8.0, 40.0, 30.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;grid-auto-rows:10px auto;max-height:min-content'><div style='grid-row:-3'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;grid-auto-rows:10px auto;max-height:min-content'><div style='grid-row:-4'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-column:2'>xx</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-row:span 2'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;grid-auto-flow:column;max-height:min-content'><div style='grid-row:2'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template-rows:20px;grid-auto-rows:10px;max-height:min-content'><div style='grid-row:1/3'>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 40.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-row:auto/2'>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+    ]);
+}
+
+#[test]
+fn a_grid_follows_automatic_placement_to_the_rows_it_makes() {
+    // Columns that placed items bring in hold the items placed
+    // automatically, which a sparse cursor never moves back to and dense
+    // packing fills from the start.
+    #[rustfmt::skip]
+    assert_bodies(&[
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-column:2'>xx</div><div style='grid-column:3'>xx</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-column:2'>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-column:2'>xx</div><div style=''>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-column:-3'>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-column:span 2'>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-column:1'>xx</div><div style='grid-column:1'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-column:2'>xx</div><div style='grid-column:1'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;grid-auto-flow:dense;max-height:min-content'><div style='grid-column:2'>xx</div><div style='grid-column:1'>xx</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-row:1'>xx</div><div style='grid-row:1'>xx</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;grid-auto-flow:column;max-height:min-content'><div style='grid-row:1'>xx</div><div style='grid-row:1'>xx</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;grid-auto-flow:column;max-height:min-content'><div style='grid-column:1'>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;grid-auto-flow:column;max-height:min-content'><div style='grid-row:span 2'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px 20px / 20px 20px;max-height:min-content'><div style='grid-area:1/1/3/3'>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px 20px / 20px 20px;grid-auto-rows:10px;max-height:min-content'><div style='grid-area:1/1/3/3'>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 50.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px 20px / 20px 20px;max-height:min-content'><div style='grid-area:1/2'>xx</div><div style='grid-column:span 2'>xx</div></div>", (8.0, 8.0, 40.0, 40.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px 20px / 20px 20px;grid-auto-flow:row dense;max-height:min-content'><div style='grid-area:1/2'>xx</div><div style='grid-column:span 2'>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 40.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px 20px / 20px 20px;max-height:min-content'><div style='grid-area:1/2'>xx</div><div style='grid-column:span 2'>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template-columns:20px 20px;max-height:min-content'><div style='grid-row:2'>xx</div><div style=''>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-row:1;grid-column:1'>xx</div><div style='grid-row:1'>xx</div></div>", (8.0, 8.0, 40.0, 20.0)),
+    ]);
+}
+
+#[test]
+fn a_grid_with_columns_that_repeat_to_fill_it_counts_rows_from_its_items() {
+    // How many columns repeat depends on the width, so every item is taken
+    // to fit in the explicit rows and only the rows it is placed on, or the
+    // rows a grid without any needs, are implicit.
+    #[rustfmt::skip]
+    assert_bodies(&[
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template-columns:repeat(auto-fill,20px);grid-auto-rows:10px auto;max-height:min-content'><div style='grid-row:1'>xx</div></div>", (8.0, 8.0, 40.0, 10.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template-columns:repeat(auto-fill,20px);grid-auto-rows:10px auto;max-height:min-content'><div style='grid-row:2'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template-columns:repeat(auto-fill,20px);grid-auto-rows:10px auto;max-height:min-content'><div style='grid-row:-2'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template-columns:repeat(auto-fill,20px);grid-auto-rows:10px auto;grid-auto-flow:column;max-height:min-content'><div style=''>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 10.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template-columns:repeat(auto-fill,20px);grid-auto-rows:10px auto;grid-auto-flow:column;max-height:min-content'><div style='grid-row:span 2'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / repeat(auto-fill,20px);grid-auto-rows:10px auto;max-height:min-content'><div style=''>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 20.0)),
+    ]);
+}
+
+#[test]
 fn a_grid_grows_to_its_content_for_a_keyword_block_minimum() {
     // A keyword `max-width` leaves the stated block size.
     #[rustfmt::skip]
