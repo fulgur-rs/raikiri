@@ -801,7 +801,7 @@ fn move_blocks(
             let _ = record_pieces(tree, node, pieces, &[], context);
         }
     }
-    move_line_blocks(tree, units, placed, context);
+    let _ = move_line_blocks(tree, units, placed, context);
 }
 
 /// Move each block that holds only lines to the column of its first line, and
@@ -809,13 +809,14 @@ fn move_blocks(
 /// of a run past its first column at the offset of its column, and as far
 /// down as the run starts there. A block whose lines reach more than one
 /// column has a piece in each, from the top of the block or of its first line
-/// there to the end of its last line there or of the block.
+/// there to the end of its last line there or of the block. `None` when
+/// the columns of `placed` run out of lines.
 fn move_line_blocks(
     tree: &mut LayoutSession<'_>,
     units: &[(Unit, f32, f32)],
     placed: &PlacedUnits,
     context: FragmentationContext,
-) {
+) -> Option<()> {
     let mut runs = placed.inner.iter();
     let mut index = 0;
     while index < units.len() {
@@ -838,9 +839,7 @@ fn move_line_blocks(
         // The top of the block's content box, in that of the container.
         let content_top = units[index].1 - offset + dy;
         let origin_x = context.column_offset_x(column);
-        let Some((_, fragments)) = runs.next() else {
-            return;
-        };
+        let (_, fragments) = runs.next()?;
         let mut pieces: Vec<Piece> = Vec::new();
         for (at, (&(_, top, bottom), &(column, dy))) in units[index..stop]
             .iter()
@@ -877,6 +876,7 @@ fn move_line_blocks(
             root.multicol_fragment_origins_recorded = true;
         }
     }
+    Some(())
 }
 
 /// Forget the columns that an earlier layout put the lines of the block
