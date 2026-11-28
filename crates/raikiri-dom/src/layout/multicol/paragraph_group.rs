@@ -1,6 +1,6 @@
 use super::*;
 use raikiri_style::property::BreakInside;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 type Measurement = (usize, LayoutOutput, BoxLayout, f32, f32, f32);
 
@@ -264,9 +264,9 @@ impl Flow {
     }
 
     /// The flow of `entries`, or `None` when no wrapper joins it, or when one
-    /// nests too deep. Without `pieces`, a wrapper that paints (see
-    /// [`paints_pieces`]) stays a box, for a caller that records one piece
-    /// for each wrapper.
+    /// nests too deep. Without `pieces`, for the page stream, a wrapper may
+    /// force a column break before or after itself, and the paragraphs
+    /// inside it may have padding or border above or below their lines.
     fn of(tree: &LayoutSession<'_>, entries: &[Measurement], pieces: bool) -> Option<Self> {
         let mut flow = Self {
             entries: Vec::with_capacity(entries.len()),
@@ -303,7 +303,6 @@ impl Flow {
         // The page stream, which passes no `pieces`, starts a column at a
         // forced break before or after a wrapper.
         if !flow_wrapper(tree, id, !pieces)
-            || !pieces && paints_pieces(tree, id)
             || parent.is_none()
                 && layout_node(tree, id).display() == DisplayValue::FlowRoot
                 && holds_one_row_of_lines(tree, id)
@@ -311,8 +310,10 @@ impl Flow {
             // Inside a wrapper, the flow takes paragraphs whose pieces hold
             // nothing but lines, between no padding or border, sized boxes
             // with no lines, and white space; the pieces are recorded without
-            // the boxes of the lines.
-            if parent.is_some() && !is_wrapped_box(tree, id) {
+            // the boxes of the lines. The page stream also takes paragraphs
+            // with padding or border above or below their lines, which it
+            // slices where a column ends.
+            if parent.is_some() && !wrapped_box(tree, id, !pieces) {
                 return None;
             }
             self.entries.push(entry);
@@ -427,6 +428,12 @@ fn is_wrapped_leaf(tree: &LayoutSession<'_>, id: usize) -> bool {
 /// below them, that spans no columns, a sized box of lines, or a sized box
 /// with no lines (see [`is_wrapped_leaf`]).
 fn is_wrapped_box(tree: &LayoutSession<'_>, id: usize) -> bool {
+    wrapped_box(tree, id, false)
+}
+
+/// [`is_wrapped_box`] that, with `edges`, also takes a paragraph with
+/// padding or border above or below its lines.
+fn wrapped_box(tree: &LayoutSession<'_>, id: usize, edges: bool) -> bool {
     let node = layout_node(tree, id);
     if node.kind() == NodeKind::Text {
         return node.ifc.is_none();
@@ -438,7 +445,7 @@ fn is_wrapped_box(tree: &LayoutSession<'_>, id: usize) -> bool {
         && node.ifc_boxes().is_empty()
         && !style_of(tree, id).float().is_floated()
         && !spans_the_columns(tree, id)
-        && !lineless::has_block_edge_decorations(&style_of(tree, id))
+        && (edges || !lineless::has_block_edge_decorations(&style_of(tree, id)))
         && (!is_sized_paragraph(tree, id) || insets_are_a_relative_offset(tree, id))
 }
 
@@ -2545,6 +2552,19 @@ pub(super) struct PagedWrapper {
     /// The wrapper that holds it, if one does.
     pub(super) wrapper: Option<usize>,
     pub(super) rect: crate::fragment::FragmentRect,
+    /// For a wrapper that paints (see [`paints_pieces`]) and reaches more
+    /// than one column, a piece in each column it reaches, in order. The
+    /// first holds its boxes, placed from `rect`; the others paint its
+    /// background and borders there. Empty for a wrapper that keeps one
+    /// record.
+    pub(super) pieces: Vec<WrapperPiece>,
+}
+
+/// A piece of a wrapper that paints, in one column of a page.
+pub(super) struct WrapperPiece {
+    pub(super) fragmentainer: usize,
+    pub(super) rect: crate::fragment::FragmentRect,
+    pub(super) clip: raikiri_traits::PaintClip,
 }
 
 pub(super) struct PagedGroup {
@@ -2577,8 +2597,8 @@ pub(super) fn paginate(
         })
         .sum::<usize>();
     work.charge(entries.len().saturating_add(line_count))?;
-    // A page of these columns records one piece for each wrapper, so a
-    // wrapper that paints stays a box here.
+    // A wrapper that paints joins the flow too: it gets a piece in each
+    // column of each page it reaches (see `paged_wrappers`).
     let flow = Flow::of(tree, entries, false).unwrap_or_else(|| Flow::plain(entries));
     // The lines of the paragraphs inside wrappers are charged here, as those
     // of the container's own are above.
@@ -2597,13 +2617,22 @@ pub(super) fn paginate(
         .sum::<usize>();
     work.charge(flow.entries.len().saturating_add(wrapped_lines))?;
     let entries = &flow.entries;
-    // The page stream places lines, and records the pieces of a wrapper from
-    // the lines it holds: room besides them is left to the other strategies.
+    // The page stream places lines, and the padding and border above or
+    // below the boxes of a wrapper, which it records as pieces of the
+    // wrapper. Sized boxes with no lines inside a wrapper are left to the
+    // other strategies.
+    if flow.entries.iter().zip(&flow.parents).zip(&flow.roles).any(
+        |(((child, ..), parent), role)| {
+            parent.is_some() && *role == Role::Box && is_wrapped_leaf(tree, *child)
+        },
+    ) {
+        return Ok(None);
+    }
     let Some(Collected {
         paragraphs,
         paragraph_count: count,
         high: ceiling,
-        room: false,
+        room,
         ..
     }) = collect(tree, &flow, false, BlockEdges::Sliced, false, None, true)
     else {
@@ -2620,6 +2649,8 @@ pub(super) fn paginate(
     };
     let mut resume = FlowCursor::default();
     let mut absolute_y = owner_y + context.origin_y;
+    // The top and the height of the columns of each page, by page index.
+    let mut pages = HashMap::<usize, (f32, f32)>::new();
     loop {
         let (page_index, page_origin, page_height) = page_for(absolute_y);
         if !work.page_available(page_index)? {
@@ -2673,38 +2704,54 @@ pub(super) fn paginate(
         // higher.
         let mut kept = 0.0f32;
         if chunk.next.is_none() && context.column_fill != ColumnFillValue::Auto {
-            let mut low = avoided_height(&paragraphs, resume, None).min(capacity);
-            let mut high = capacity;
-            // When the lines a break keeps together already fit, the columns
-            // are that tall; otherwise the search starts from the avoided
-            // paragraphs.
-            let floor = break_height(&paragraphs, resume).min(capacity);
-            if floor > low {
-                let filled = fill_chunk(&paragraphs, context, floor, resume, false);
-                work.charge(visited(&paragraphs, resume, filled.as_ref()))?;
-                if let Some(candidate) = filled
-                    && candidate.next.is_none()
-                {
-                    high = floor;
-                    low = floor;
-                    kept = floor;
-                    chunk = candidate;
+            // Balanced columns grow rather than break between the padding
+            // of a wrapper and the box next to it (see `fill_chunk_with`),
+            // unless no height lets them: then they break there.
+            let mut strict = room;
+            for trial_strict in [room, false].into_iter().take(usize::from(room) + 1) {
+                strict = trial_strict;
+                let balance_fill = |height: f32| {
+                    fill_chunk_with(&paragraphs, context, height, resume, false, strict, false)
+                };
+                let mut balanced = false;
+                let mut low = avoided_height(&paragraphs, resume, None).min(capacity);
+                let mut high = capacity;
+                // When the lines a break keeps together already fit, the
+                // columns are that tall; otherwise the search starts from the
+                // avoided paragraphs.
+                let floor = break_height(&paragraphs, resume).min(capacity);
+                if floor > low {
+                    let filled = balance_fill(floor);
+                    work.charge(visited(&paragraphs, resume, filled.as_ref()))?;
+                    if let Some(candidate) = filled
+                        && candidate.next.is_none()
+                    {
+                        high = floor;
+                        low = floor;
+                        kept = floor;
+                        chunk = candidate;
+                        balanced = true;
+                    }
                 }
-            }
-            for _ in 0..32 {
-                if high - low <= 0.001 {
+                for _ in 0..32 {
+                    if high - low <= 0.001 {
+                        break;
+                    }
+                    let trial = (low + high) * 0.5;
+                    let filled = balance_fill(trial);
+                    work.charge(visited(&paragraphs, resume, filled.as_ref()))?;
+                    if let Some(candidate) = filled
+                        && candidate.next.is_none()
+                    {
+                        high = trial;
+                        chunk = candidate;
+                        balanced = true;
+                    } else {
+                        low = trial;
+                    }
+                }
+                if balanced {
                     break;
-                }
-                let trial = (low + high) * 0.5;
-                let filled = fill_chunk(&paragraphs, context, trial, resume, false);
-                work.charge(visited(&paragraphs, resume, filled.as_ref()))?;
-                if let Some(candidate) = filled
-                    && candidate.next.is_none()
-                {
-                    high = trial;
-                    chunk = candidate;
-                } else {
-                    low = trial;
                 }
             }
             // The last page's columns are as tall as what remains in one
@@ -2715,7 +2762,8 @@ pub(super) fn paginate(
                 .unwrap_or(0.0)
                 .min(capacity);
             if divided > chunk.group.height {
-                let filled = fill_chunk(&paragraphs, context, divided, resume, false);
+                let filled =
+                    fill_chunk_with(&paragraphs, context, divided, resume, false, strict, false);
                 work.charge(visited(&paragraphs, resume, filled.as_ref()))?;
                 if let Some(candidate) = filled
                     && candidate.next.is_none()
@@ -2749,6 +2797,21 @@ pub(super) fn paginate(
             let Some(paragraph) = &paragraphs[index] else {
                 continue; // cov:ignore: fill_chunk only creates placements for present paragraphs.
             };
+            // The padding and border of a wrapper that a column end cuts
+            // is left to the other strategies: its pieces here would each
+            // hold all of it.
+            let extent = paragraph.extents.first().zip(paragraph.extents.last());
+            let whole = paragraph.edge_start
+                + extent.map_or(0.0, |(first, last)| last.1 - first.0)
+                + paragraph.edge_end;
+            if flow.roles[index] != Role::Box
+                && placement.fragments.iter().any(|range| {
+                    range.y < -f32::EPSILON
+                        || placement.first_y + range.y + whole > height + f32::EPSILON
+                })
+            {
+                return Ok(None);
+            }
             let mut ranges = placement.fragments.into_iter().peekable();
             while let Some(range) = ranges.next() {
                 work.charge(1)?;
@@ -2835,6 +2898,7 @@ pub(super) fn paginate(
                 });
             }
         }
+        pages.insert(page_index as usize, (group_y, height));
         result.groups.push(crate::fragment::MulticolGroup {
             context: FragmentationContext {
                 origin_y: group_y,
@@ -2857,22 +2921,40 @@ pub(super) fn paginate(
         resume = next;
         absolute_y = page_origin + page_height;
     }
-    result.wrappers = paged_wrappers(&flow, &result.fragments);
-    work.charge(result.wrappers.len())?;
+    let (wrappers, visited) = paged_wrappers(tree, &flow, &result.fragments, context, &pages);
+    result.wrappers = wrappers;
+    work.charge(result.wrappers.len().saturating_add(visited))?;
     Ok(Some(result))
 }
 
 /// The border boxes of the wrappers of `flow`, from the pieces of the boxes
 /// they hold, which are in flow order. A wrapper whose boxes have no piece
-/// has none.
-fn paged_wrappers(flow: &Flow, fragments: &[PagedFragment]) -> Vec<PagedWrapper> {
-    let wrapper = |(open, role): (usize, &Role)| {
+/// has none. `pages` gives the top and the height of the columns of each
+/// page, by page index. Also gives how many pieces of boxes it went
+/// through to place the pieces of wrappers.
+fn paged_wrappers(
+    tree: &LayoutSession<'_>,
+    flow: &Flow,
+    fragments: &[PagedFragment],
+    context: FragmentationContext,
+    pages: &HashMap<usize, (f32, f32)>,
+) -> (Vec<PagedWrapper>, usize) {
+    // The wrappers with pieces, which those inside them need too: each of
+    // their pieces is placed in the piece of its column.
+    let mut pieced = HashSet::new();
+    let mut wrappers = Vec::new();
+    let mut visited = 0usize;
+    // Each wrapper with the range of the pieces of what it holds, when it
+    // holds any.
+    let held = flow.roles.iter().enumerate().filter_map(|(open, role)| {
         let Role::Open(close) = *role else {
             return None;
         };
         let start = fragments.partition_point(|fragment| fragment.entry < open);
-        let end = fragments.partition_point(|fragment| fragment.entry < close);
-        let first = fragments[start..end].first()?;
+        let end = fragments.partition_point(|fragment| fragment.entry <= close);
+        Some((open, start, end, fragments[start..end].first()?))
+    });
+    for (open, start, end, first) in held {
         let (layout, first_layout) = (flow.entries[open].2, flow.entries[first.entry].2);
         let bottom = fragments[start..end]
             .iter()
@@ -2883,18 +2965,134 @@ fn paged_wrappers(flow: &Flow, fragments: &[PagedFragment]) -> Vec<PagedWrapper>
         let x = first.rect.x - flow.insets[first.entry] - first_layout.margin.left
             + flow.insets[open]
             + layout.margin.left;
-        Some(PagedWrapper {
-            node: flow.entries[open].0,
-            wrapper: flow.parents[open].map(|parent| flow.entries[parent].0),
-            rect: crate::fragment::FragmentRect {
-                x,
-                y: first.rect.y,
-                width: layout.size.width,
-                height: bottom - first.rect.y,
-            },
+        let rect = crate::fragment::FragmentRect {
+            x,
+            y: first.rect.y,
+            width: layout.size.width,
+            height: bottom - first.rect.y,
+        };
+        let node = flow.entries[open].0;
+        let wrapper = flow.parents[open].map(|parent| flow.entries[parent].0);
+        let inside_pieces = wrapper.is_some_and(|outer| pieced.contains(&outer));
+        let pieces = if inside_pieces || paints_pieces(tree, node) {
+            visited = visited.saturating_add(end - start);
+            wrapper_pieces(
+                tree,
+                node,
+                rect,
+                &fragments[start..end],
+                first.fragmentainer,
+                context,
+                pages,
+                inside_pieces,
+            )
+        } else {
+            Vec::new()
+        };
+        if !pieces.is_empty() {
+            pieced.insert(node);
+        }
+        wrappers.push(PagedWrapper {
+            node,
+            wrapper,
+            rect,
+            pieces,
+        });
+    }
+    (wrappers, visited)
+}
+
+/// The pieces of `node`, a wrapper that paints, whose border box `rect`
+/// starts in fragmentainer `first`, from the pieces `fragments` of what it
+/// holds and its own edges: one in each column they reach, from the top of
+/// the wrapper or of the column to the end of the column or of what the
+/// wrapper holds there. A wrapper that slices its block-axis border and
+/// padding paints whole in each piece, moved up by what the earlier pieces
+/// took, and the column clips it. Empty when it reaches one column, unless
+/// `always`, for a wrapper inside one with pieces.
+#[allow(clippy::too_many_arguments)]
+fn wrapper_pieces(
+    tree: &LayoutSession<'_>,
+    node: usize,
+    rect: crate::fragment::FragmentRect,
+    fragments: &[PagedFragment],
+    first: usize,
+    context: FragmentationContext,
+    pages: &HashMap<usize, (f32, f32)>,
+    always: bool,
+) -> Vec<WrapperPiece> {
+    let mut columns: Vec<(usize, f32)> = Vec::new();
+    for fragment in fragments {
+        let bottom = fragment.rect.y + fragment.rect.height;
+        match columns.last_mut() {
+            Some((fragmentainer, end)) if *fragmentainer == fragment.fragmentainer => {
+                *end = end.max(bottom);
+            }
+            _ => columns.push((fragment.fragmentainer, bottom)),
+        }
+    }
+    if (columns.len() < 2 && !always) || context.column_count == 0 {
+        return Vec::new();
+    }
+    let count = columns.len();
+    let geometry = |fragmentainer: usize| pages.get(&(fragmentainer / context.column_count));
+    // A piece before the last runs to the end of its column: the page
+    // stream moves the last lines of a box with the padding and border
+    // below it, so a column end inside the wrapper cuts what it holds.
+    let heights: Vec<f32> = columns
+        .iter()
+        .enumerate()
+        .map(|(index, &(fragmentainer, end))| {
+            let (column_top, column_height) = geometry(fragmentainer).copied().unwrap_or_default();
+            let top = if index == 0 { rect.y } else { column_top };
+            let bottom = if index + 1 == count {
+                end
+            } else {
+                column_top + column_height
+            };
+            (bottom - top).max(0.0)
         })
-    };
-    flow.roles.iter().enumerate().filter_map(wrapper).collect()
+        .collect();
+    let total: f32 = heights.iter().sum();
+    let sliced = lineless::slices_decorations(tree, node);
+    let first_column = first % context.column_count;
+    let mut taken = 0.0f32;
+    let mut pieces = Vec::with_capacity(count);
+    for (index, (&(fragmentainer, _), height)) in columns.iter().zip(heights).enumerate() {
+        let (column_top, column_height) = geometry(fragmentainer).copied().unwrap_or_default();
+        let column = fragmentainer % context.column_count;
+        let top = if index == 0 { rect.y } else { column_top };
+        let piece = crate::fragment::FragmentRect {
+            x: rect.x + context.column_offset_x(column) - context.column_offset_x(first_column),
+            y: top,
+            height,
+            ..rect
+        };
+        // The clip cuts the piece where the wrapper breaks, and leaves the
+        // edges where it begins and ends open, as a paragraph's are, so the
+        // ink of what it holds may overflow there.
+        let clip_top = if index == 0 {
+            column_top - BLOCK_INK_REACH
+        } else {
+            column_top
+        };
+        let clip_bottom = if index + 1 == count {
+            column_top + column_height + BLOCK_INK_REACH
+        } else {
+            column_top + column_height
+        };
+        pieces.push(WrapperPiece {
+            fragmentainer,
+            rect: lineless::sliced_rect(piece, sliced.then_some((taken, total))),
+            clip: inline_open_clip(crate::fragment::FragmentRect {
+                y: clip_top,
+                height: clip_bottom - clip_top,
+                ..piece
+            }),
+        });
+        taken += height;
+    }
+    pieces
 }
 
 /// Paragraphs a fill from `resume` visited. A failed fill stops anywhere up

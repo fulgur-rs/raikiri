@@ -1002,3 +1002,214 @@ fn the_last_page_columns_are_as_tall_as_the_orphans_a_break_keeps() {
         .collect();
     assert_eq!(last, [(2, 0, 0, 60), (2, 100, 0, 24)]);
 }
+
+#[test]
+fn wrappers_with_edges_or_paint_fill_each_page_in_column_order() {
+    // Padding and border above or below the boxes of a wrapper, a wrapper
+    // that paints, and paragraphs with padding or border inside a wrapper
+    // fill the pages as plain paragraphs do (Chromium).
+    let l = par("L", 1, 15);
+    let m = par("M", 1, 12);
+    let wrapped = mc(&format!("<div class=w id=w>{l}</div>{m}"));
+    for (body, css, expected) in [
+        (
+            &wrapped,
+            ".w{padding-bottom:6px}",
+            &[
+                "p0 x0: L1-L10@0",
+                "p0 x100: L11-L15@0 M1-M4@106",
+                "p1 x0: M5-M8@0",
+                "p1 x100: M9-M12@0",
+            ][..],
+        ),
+        (
+            &wrapped,
+            ".w{padding-top:6px}",
+            &[
+                "p0 x0: L1-L9@6",
+                "p0 x100: L10-M4@0",
+                "p1 x0: M5-M8@0",
+                "p1 x100: M9-M12@0",
+            ][..],
+        ),
+        (
+            &wrapped,
+            ".w{background:#fcc}",
+            &[
+                "p0 x0: L1-L10@0",
+                "p0 x100: L11-M5@0",
+                "p1 x0: M6-M9@0",
+                "p1 x100: M10-M12@0",
+            ][..],
+        ),
+        (
+            &wrapped,
+            ".w{border:3px solid green;background:#fcc}",
+            &[
+                "p0 x3: L1-L9@3",
+                "p0 x100: M1-M3@123",
+                "p0 x103: L10-L15@0",
+                "p1 x0: M4-M8@0",
+                "p1 x100: M9-M12@0",
+            ][..],
+        ),
+        (
+            &mc(&format!("<div class=w>{l}{}</div>{m}", par("N", 1, 3))),
+            "p{background:#ccc;border:2px solid blue}",
+            &[
+                "p0 x2: L1-L9@2",
+                "p0 x102: L10-L15@0 N1-N3@124",
+                "p1 x2: M1-M6@2",
+                "p1 x102: M7-M12@0",
+            ][..],
+        ),
+    ] {
+        assert_eq!(columns(body, css), expected, "{css}");
+    }
+    assert_eq!(
+        visible_boxes(&wrapped, ".w{border:3px solid green;background:#fcc}", "w"),
+        [(0, 0, 0, 200), (0, 100, 0, 123)],
+        "border pieces"
+    );
+}
+
+#[test]
+fn a_painted_wrapper_has_a_piece_in_each_column_of_every_page() {
+    // The boxes inside the wrapper are placed in the piece of their column,
+    // so each page paints the wrapper's background there before its lines,
+    // and the border below the boxes shows only in the last piece (Chromium).
+    let body = mc(&format!(
+        "<div class=w id=w>{}</div>{}",
+        par("L", 1, 45),
+        par("M", 1, 12)
+    ));
+    let css = ".w{background:#fcc;border-bottom:4px solid green}";
+    assert_eq!(
+        columns(&body, css),
+        [
+            "p0 x0: L1-L10@0",
+            "p0 x100: L11-L20@0",
+            "p1 x0: L21-L30@0",
+            "p1 x100: L31-L40@0",
+            "p2 x0: L41-L45@0 M1-M3@104",
+            "p2 x100: M4-M12@0",
+        ]
+    );
+    assert_eq!(
+        visible_boxes(&body, css, "w"),
+        [
+            (0, 0, 0, 200),
+            (0, 100, 0, 200),
+            (1, 0, 0, 200),
+            (1, 100, 0, 200),
+            (2, 0, 0, 104),
+        ]
+    );
+}
+
+#[test]
+fn wrappers_inside_a_painted_wrapper_have_a_piece_in_each_column_too() {
+    // A wrapper inside one with pieces has a piece in each column it
+    // reaches, placed in the outer piece there, and the boxes it holds are
+    // placed in its piece of their column (Chromium).
+    let m = par("M", 1, 12);
+    let nested = mc(&format!(
+        "<div class=w><div class=v id=v>{}</div>{}</div>{m}",
+        par("L", 1, 45),
+        par("K", 1, 3)
+    ));
+    let css =
+        ".w{background:#fcc}.v{background:#cfc;border-bottom:4px solid blue;padding-left:5px}";
+    assert_eq!(
+        columns(&nested, css),
+        [
+            "p0 x5: L1-L10@0",
+            "p0 x105: L11-L20@0",
+            "p1 x5: L21-L30@0",
+            "p1 x105: L31-L40@0",
+            "p2 x0: K1-K3@104",
+            "p2 x5: L41-L45@0",
+            "p2 x100: M1-M10@0",
+            "p3 x0: M11-M12@0",
+        ]
+    );
+    assert_eq!(
+        visible_boxes(&nested, css, "v"),
+        [
+            (0, 0, 0, 200),
+            (0, 100, 0, 200),
+            (1, 0, 0, 200),
+            (1, 100, 0, 200),
+            (2, 0, 0, 104),
+        ]
+    );
+    // An unpainted wrapper inside, and a painted wrapper that one column
+    // holds.
+    let l = par("L", 1, 15);
+    for (body, expected) in [
+        (
+            mc(&format!("<div class=w><div>{l}</div></div>{m}")),
+            [
+                "p0 x0: L1-L10@0",
+                "p0 x100: L11-M5@0",
+                "p1 x0: M6-M9@0",
+                "p1 x100: M10-M12@0",
+            ],
+        ),
+        (
+            mc(&format!("{l}<div class=w>{}</div>{m}", par("N", 1, 2))),
+            [
+                "p0 x0: L1-L10@0",
+                "p0 x100: L11-M3@0",
+                "p1 x0: M4-M8@0",
+                "p1 x100: M9-M12@0",
+            ],
+        ),
+    ] {
+        assert_eq!(columns(&body, ".w{background:#fcc}"), expected, "{body}");
+    }
+}
+
+#[test]
+fn a_wrapper_holding_a_sized_box_stays_in_the_columns_the_pages_cut() {
+    // The page fill places lines and the edges of wrappers; a sized box with
+    // no lines inside a wrapper leaves the wrapper to the columns that the
+    // pages cut, where every line is reported once.
+    let body = mc(&format!(
+        "<div class=w>{}<div style='height:30px'></div></div>{}",
+        par("L", 1, 15),
+        par("M", 1, 12)
+    ));
+    let mut texts: Vec<_> = lines(&body, ".w{padding-bottom:6px}")
+        .into_iter()
+        .map(|line| line.3)
+        .collect();
+    texts.sort();
+    let mut expected: Vec<_> = (1..=15)
+        .map(|n| format!("L{n}"))
+        .chain((1..=12).map(|n| format!("M{n}")))
+        .collect();
+    expected.sort();
+    assert_eq!(texts, expected);
+}
+
+#[test]
+fn a_wrapper_whose_padding_a_column_end_cuts_ends_with_what_it_holds() {
+    // Padding taller than a column is not sliced into pieces that each
+    // hold all of it: the wrapper's background ends with its line, so it
+    // paints over none of what follows, as in Chromium.
+    let body = mc(&format!(
+        "<div class=w id=w>{}</div>{}",
+        par("L", 1, 1),
+        par("M", 1, 30)
+    ));
+    let css = ".mc{column-fill:auto}.w{background:#fcc;padding-top:250px}";
+    let line = lines(&body, css)
+        .into_iter()
+        .find(|(.., text)| text == "L1")
+        .expect("the wrapper's line is laid out");
+    let last = *visible_boxes(&body, css, "w")
+        .last()
+        .expect("the wrapper paints");
+    assert_eq!((last.0, last.1, last.3), (line.0, line.1, line.2 + 20));
+}
