@@ -2030,7 +2030,7 @@ fn fill_chunk_with(
     follows_content: bool,
     trial: bool,
 ) -> Option<Chunk> {
-    // The breaks a column end moved up to, as [`Moved`] lists them.
+    // The breaks a column end moved up to, as `Moved` lists them.
     let mut moved: Moved = Vec::new();
     // The fill moves the column ends inside the chunk as it goes. The one
     // that ends its last column, which only the end of the fill shows, takes
