@@ -739,7 +739,6 @@ pub(super) const SLICE_MIN_ROOM: f32 = 1.0 / 64.0;
 /// columns cannot allocate or loop without end.
 pub(super) const MAX_SLICED_PIECES: usize = 1024;
 
-#[derive(Clone)]
 struct Paragraph {
     extents: Vec<(f32, f32)>,
     margin_top: f32,
@@ -2015,7 +2014,7 @@ fn fill_chunk_with(
     follows_content: bool,
     trial: bool,
 ) -> Option<Chunk> {
-    let fill = |paragraphs: &[Option<Paragraph>]| {
+    let fill = |moved: &[usize]| {
         fill_chunk_once(
             paragraphs,
             context,
@@ -2024,18 +2023,21 @@ fn fill_chunk_with(
             trailing_margin,
             strict,
             follows_content,
+            moved,
         )
     };
-    let mut chunk = fill(paragraphs)?;
-    let mut moved: Option<Vec<Option<Paragraph>>> = None;
+    let mut chunk = fill(&[])?;
+    // The entries before which a column end moved up, which start the next
+    // column, as after a forced break, without the margins above them.
+    let mut moved: Vec<usize> = Vec::new();
     // Column ends before this entry stay where they are.
     let mut from = resume.paragraph + 1;
     // Each round moves a break that no round moved before, or passes over a
     // column end that cannot move, so the rounds end. Columns that cannot
     // take a moved break leave the flow to the other strategies.
     loop {
-        let current = moved.as_deref().unwrap_or(paragraphs);
-        let Some((end, earlier)) = avoided_column_end(current, &chunk, resume, from) else {
+        let Some((end, earlier)) = avoided_column_end(paragraphs, &chunk, resume, from, &moved)
+        else {
             return Some(chunk);
         };
         let Some(index) = earlier else {
@@ -2045,12 +2047,8 @@ fn fill_chunk_with(
             from = end + 1;
             continue;
         };
-        let moved = moved.get_or_insert_with(|| paragraphs.to_vec());
-        if let Some(paragraph) = moved[index].as_mut() {
-            paragraph.break_before = true;
-            paragraph.margin_top = 0.0;
-        }
-        chunk = fill(moved)?;
+        moved.push(index);
+        chunk = fill(&moved)?;
     }
 }
 
@@ -2064,7 +2062,10 @@ fn avoided_column_end(
     chunk: &Chunk,
     resume: FlowCursor,
     from: usize,
+    moved: &[usize],
 ) -> Option<(usize, Option<usize>)> {
+    let breaks_before =
+        |index: usize, paragraph: &Paragraph| paragraph.break_before || moved.contains(&index);
     let placement = |index: usize| {
         chunk
             .group
@@ -2082,7 +2083,7 @@ fn avoided_column_end(
     let avoided = |index: usize| {
         paragraphs[index]
             .as_ref()
-            .is_some_and(|box_| box_.avoids_before && !box_.break_before)
+            .is_some_and(|box_| box_.avoids_before && !breaks_before(index, box_))
             && takes_room(index)
     };
     // The entry that a column end comes before, and the column it ends.
@@ -2109,7 +2110,7 @@ fn avoided_column_end(
     let movable = |index: usize| {
         index > resume.paragraph
             && paragraphs[index].as_ref().is_some_and(|paragraph| {
-                !paragraph.avoids_before && !paragraph.break_before && !paragraph.closes
+                !paragraph.avoids_before && !breaks_before(index, paragraph) && !paragraph.closes
             })
             && !follows_padding(paragraphs, index)
             && placement(index).is_some_and(|placement| {
@@ -2164,7 +2165,9 @@ fn last_column_of(chunk: &Chunk) -> Option<usize> {
 }
 
 /// One fill of [`fill_chunk_with`], which takes every column end where it
-/// falls.
+/// falls, but starts a column before each of the entries `moved`, without
+/// the margins above them.
+#[allow(clippy::too_many_arguments)]
 fn fill_chunk_once(
     paragraphs: &[Option<Paragraph>],
     context: FragmentationContext,
@@ -2173,6 +2176,7 @@ fn fill_chunk_once(
     trailing_margin: bool,
     strict: bool,
     follows_content: bool,
+    moved: &[usize],
 ) -> Option<Chunk> {
     let mut placements: Vec<Option<Placement>> = Vec::new();
     let mut column = 0usize;
@@ -2204,10 +2208,19 @@ fn fill_chunk_once(
         } else {
             0
         };
+        // A column end moved up before the entry is a break as a forced one
+        // is, which cuts the margin above the entry too.
+        let moved_here = moved.contains(&paragraph_index);
+        let break_before = paragraph.break_before || moved_here;
+        let margin_top = if moved_here {
+            0.0
+        } else {
+            paragraph.margin_top
+        };
         // A forced break after content, an empty box included, starts the
         // next column, and the margins before it are cut (CSS Fragmentation
         // 3, 5.2).
-        if paragraph.break_before
+        if break_before
             && initial_line == 0
             && (column_has_content || empty_box_column == Some(column))
         {
@@ -2231,14 +2244,13 @@ fn fill_chunk_once(
         // An unforced break discards the margin above the paragraph it ends
         // up before, so a paragraph resumed from its start has none either,
         // unless a forced break came before it, which keeps the margin.
-        let at_resumed_start = paragraph_index == resume.paragraph
-            && resume != FlowCursor::default()
-            && !paragraph.break_before;
-        let mut adjoining = if cut_margins && !paragraph.break_before {
+        let at_resumed_start =
+            paragraph_index == resume.paragraph && resume != FlowCursor::default() && !break_before;
+        let mut adjoining = if cut_margins && !break_before {
             Margins::default()
         } else {
             pending_margin.with(if initial_line == 0 && !at_resumed_start {
-                paragraph.margin_top
+                margin_top
             } else {
                 0.0
             })
