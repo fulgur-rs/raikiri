@@ -710,7 +710,9 @@ pub(crate) fn grid_shim_candidates(
             Some((child, set, margin))
         })
         .collect();
-    let mut margins = candidates.iter().map(|&(_, _, margin)| margin);
+    // Only items with absolute-length margins take shims, and only where
+    // those margins differ.
+    let mut margins = candidates.iter().filter_map(|&(_, _, margin)| margin);
     let first = margins.next();
     if margins.all(|margin| Some(margin) == first) {
         return Vec::new();

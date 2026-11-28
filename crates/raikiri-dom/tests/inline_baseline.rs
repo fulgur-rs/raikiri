@@ -2358,8 +2358,26 @@ fn rtl_wrap_lines_with_a_relative_item_share_the_line() {
 fn grid_columns_hold_the_baseline_shims_of_their_items() {
     // An intrinsically sized column takes the room the alignment shifts its
     // items by: the widest left margin of a group sharing a baseline before
-    // the left border edges it lines up (Chromium).
+    // the left border edges it lines up (Chromium). Values are Chromium's.
     let cases: &[(&str, &[(&str, Rect)])] = &[
+        // A column the items do not size still offers each item its whole
+        // area: the shim only shifts the item.
+        (
+            r#"<div id=g style="display:inline-grid;grid-template-columns:100px"><div id=a style="justify-self:baseline;margin-left:30px;width:20px;height:10px"></div><div id=b style="justify-self:baseline">XXXXX XXXXX</div></div>"#,
+            &[
+                ("g", (8.0, 8.0, 100.0, 30.0)),
+                ("a", (38.0, 8.0, 20.0, 10.0)),
+                ("b", (38.0, 18.0, 100.0, 20.0)),
+            ],
+        ),
+        (
+            r#"<div id=g style="display:inline-grid;grid-template-columns:fit-content(100px)"><div id=a style="justify-self:baseline;margin-left:30px;width:20px;height:10px"></div><div id=b style="justify-self:baseline">XXXXX XXXXX</div></div>"#,
+            &[
+                ("g", (8.0, 8.0, 100.0, 30.0)),
+                ("a", (38.0, 8.0, 20.0, 10.0)),
+                ("b", (38.0, 18.0, 100.0, 20.0)),
+            ],
+        ),
         (
             r#"<div id=g style="display:inline-grid;grid-template-columns:auto 40px"><div id=a style="justify-self:baseline;margin-left:30px;margin-right:5px;width:20px;height:20px"></div><div id=x style="height:10px"></div><div id=b style="justify-self:baseline;width:50px;height:20px"></div></div>"#,
             &[

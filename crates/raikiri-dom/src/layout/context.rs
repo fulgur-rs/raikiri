@@ -176,6 +176,14 @@ pub(crate) struct LayoutContext {
     /// (see `grid_baseline_shims` in
     /// [`crate::layout::taffy_adapter::algorithms`]).
     pub(crate) grid_baseline_shims: HashMap<usize, f32>,
+    /// The grid lines of the in-flow items of each grid container whose
+    /// baseline shims were looked for, by container and the input it was laid
+    /// out under, so that the layout finding them runs once for each.
+    pub(crate) grid_item_lines: Vec<(
+        usize,
+        crate::layout::protocol::LayoutInput,
+        Vec<(usize, crate::layout::taffy_adapter::GridItemLines)>,
+    )>,
     /// Owners whose size-only layout must also provide a first baseline.
     pub(crate) baseline_measure_owners: Vec<usize>,
     pub(crate) flex_item_percent_bases: Vec<(usize, Size<Option<f32>>)>,
