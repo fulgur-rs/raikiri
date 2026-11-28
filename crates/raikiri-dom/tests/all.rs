@@ -35,6 +35,7 @@ mod border_flow_relative;
 mod button_content_centering;
 mod button_fit_content_width;
 mod clearance_after_pushed_float_growth;
+mod column_avoided_breaks_balance;
 mod column_chain_fills_definite_height;
 mod column_fill_auto_pages;
 mod column_fill_balance_definite_height;
