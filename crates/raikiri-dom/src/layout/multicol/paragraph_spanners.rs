@@ -385,14 +385,12 @@ fn column_height(
     let total = units.last().map_or(0.0, |unit| unit.2) - units.first().map_or(0.0, |unit| unit.1);
     let fits = |height: f32| column_starts(units, height, context).len() <= available;
     let mut high = cap.map_or(total, |cap| cap.min(total));
-    if !fits(high) {
-        return high;
-    }
-    let mut low = units
+    // Units that overflow the columns at the cap leave nothing to search.
+    let tallest = units
         .iter()
         .map(|&(_, top, bottom)| bottom - top)
-        .fold(0.0f32, f32::max)
-        .min(high);
+        .fold(0.0f32, f32::max);
+    let mut low = if fits(high) { tallest.min(high) } else { high };
     for _ in 0..32 {
         if high - low <= 1.0 / 64.0 {
             break;
@@ -415,10 +413,7 @@ fn column_starts(
     context: FragmentationContext,
 ) -> Vec<usize> {
     let mut starts = vec![0];
-    let Some(first) = units.first() else {
-        return starts;
-    };
-    let mut origin = first.1;
+    let mut origin = units.first().map_or(0.0, |unit| unit.1);
     let mut index = 1;
     while index < units.len() {
         if units[index].2 - origin <= height + f32::EPSILON {

@@ -6637,6 +6637,31 @@ fn a_block_that_avoids_breaks_inside_moves_whole_to_the_next_column() {
 }
 
 #[test]
+fn a_block_among_the_lines_of_a_paragraph_overflows_short_balanced_columns_in_order() {
+    // Balanced columns 40px tall cannot hold the paragraph, so it fills them
+    // in turn and goes on in columns past the second. Values match Chromium.
+    let (mut doc, container, boxes) = column_container(
+        "height:40px",
+        &[
+            Part::Lines(2),
+            Part::Box("display:block;height:20px"),
+            Part::Lines(4),
+        ],
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    assert_eq!(
+        column_ranges(&doc, container),
+        [
+            (0, 2, 0, 0.0, 0.0),
+            (2, 3, 1, 60.0, 20.0),
+            (3, 5, 2, 120.0, 0.0),
+            (5, 6, 3, 180.0, 0.0),
+        ]
+    );
+    assert_eq!(box_rect(&doc, boxes[0]), (60.0, 0.0, 40.0, 20.0));
+}
+
+#[test]
 fn the_lines_after_a_block_keep_orphans_together_in_the_next_column() {
     // With `orphans: 2` the first line after the block cannot stay alone
     // below it, so the four lines fill the second column. Values match
