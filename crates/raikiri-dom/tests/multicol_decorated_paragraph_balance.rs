@@ -23,6 +23,9 @@ const AHEM: &[u8] = include_bytes!(concat!(
 
 type Rect = [f32; 4];
 
+/// Markup, and the expected pieces of each element by `id`.
+type Case<'a> = (&'a str, &'a [(&'a str, &'a [Rect])]);
+
 /// The fragments of each element with an `id` in `body`, inside the
 /// multi-column container `mc`, on the first page of 800px by 600px.
 fn pieces(body: &str) -> Vec<(String, Vec<Rect>)> {
@@ -91,7 +94,7 @@ fn assert_pieces(body: &str, expected: &[(&str, &[Rect])]) {
 
 #[test]
 fn balanced_columns_break_between_the_lines_of_a_decorated_paragraph() {
-    let cases: &[(&str, &[(&str, &[Rect])])] = &[
+    let cases: &[Case] = &[
         (
             "<div id=mc style='columns:2;column-gap:0;width:200px'><div id=p style='padding-bottom:5px'>X<br>X<br>X<br>X</div></div>",
             &[("p", &[[0.0, 0.0, 100.0, 25.0], [100.0, 0.0, 100.0, 25.0]])],
@@ -216,4 +219,58 @@ fn cloned_edges_repeat_in_each_piece_of_a_container_with_a_definite_height() {
             ("p", &[[100.0, 0.0, 100.0, 40.0]]),
         ],
     );
+}
+
+#[test]
+fn balanced_columns_keep_the_orphans_of_the_first_piece_and_yield_its_widows() {
+    let cases: &[Case] = &[
+        (
+            "<div id=mc style='columns:3;column-gap:0;width:300px'><div id=p style='padding-bottom:5px'>X<br>X<br>X<br>X</div></div>",
+            &[(
+                "p",
+                &[
+                    [0.0, 0.0, 100.0, 20.0],
+                    [100.0, 0.0, 100.0, 20.0],
+                    [200.0, 0.0, 100.0, 15.0],
+                ],
+            )],
+        ),
+        (
+            "<div id=mc style='columns:2;column-gap:0;width:200px'><div id=p style='padding-top:7px'>X<br>X<br>X</div></div>",
+            &[("p", &[[0.0, 0.0, 100.0, 27.0], [100.0, 0.0, 100.0, 10.0]])],
+        ),
+        (
+            "<div id=mc style='columns:2;column-gap:0;width:200px'><div id=p style='padding-bottom:30px'>X<br>X</div></div>",
+            &[("p", &[[0.0, 0.0, 100.0, 40.0], [100.0, 0.0, 100.0, 40.0]])],
+        ),
+        (
+            "<div id=mc style='columns:2;column-gap:0;width:200px'><div id=p style='padding-top:30px'>X<br>X</div></div>",
+            &[("p", &[[0.0, 0.0, 100.0, 50.0]])],
+        ),
+        (
+            "<div id=mc style='columns:3;column-gap:0;width:300px'><div id=p style='padding:5px 0;box-decoration-break:clone'>X<br>X<br>X<br>X<br>X<br>X</div></div>",
+            &[(
+                "p",
+                &[
+                    [0.0, 0.0, 100.0, 30.0],
+                    [100.0, 0.0, 100.0, 30.0],
+                    [200.0, 0.0, 100.0, 30.0],
+                ],
+            )],
+        ),
+        (
+            "<div id=mc style='columns:3;column-gap:0;width:300px'><div id=p style='border-bottom:30px solid'>X<br>X<br>X<br>X</div></div>",
+            &[(
+                "p",
+                &[
+                    [0.0, 0.0, 100.0, 40.0],
+                    [100.0, 0.0, 100.0, 40.0],
+                    [200.0, 0.0, 100.0, 40.0],
+                ],
+            )],
+        ),
+    ];
+    for (body, expected) in cases {
+        assert_pieces(body, expected);
+    }
 }

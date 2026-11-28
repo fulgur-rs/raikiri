@@ -908,7 +908,8 @@ pub(super) fn balance(
     {
         return None;
     }
-    let (group, height) = balanced(&paragraphs, context, high)?;
+    let ceiling = high + repeated_edges(&paragraphs, context);
+    let (group, height) = balanced(&paragraphs, context, ceiling)?;
     let mut group = finish_group(group.placements, height);
     // A plan whose column end cuts the lines of a sliced box is left to the
     // other strategies.
@@ -917,6 +918,21 @@ pub(super) fn balance(
         .then_some(())?;
     group.flow = flow.has_wrappers().then_some(flow);
     Some(group)
+}
+
+/// The padding and border that cloned edges repeat in the pieces after the
+/// first, one piece per line at most, beyond the edges that the height of
+/// all content in one column already holds once.
+fn repeated_edges(paragraphs: &[Option<Paragraph>], context: FragmentationContext) -> f32 {
+    paragraphs
+        .iter()
+        .flatten()
+        .filter(|paragraph| paragraph.cloned)
+        .map(|paragraph| {
+            let pieces = paragraph.extents.len().min(context.column_count);
+            (paragraph.edge_start + paragraph.edge_end) * pieces.saturating_sub(1) as f32
+        })
+        .sum()
 }
 
 /// The paragraphs placed in the columns of `context` at the height that
@@ -1197,23 +1213,14 @@ fn fill_definite_paragraphs(
     if context.column_fill != ColumnFillValue::Auto
         && context.column_count > 0
         && fill(paragraphs, context, height, false).is_some()
+        && let Some((group, balanced)) = balanced(
+            paragraphs,
+            context,
+            ceiling + repeated_edges(paragraphs, context),
+        )
+        && let Some(balanced) = balanced_below(balanced, height)
     {
-        // The ceiling holds the padding and border of each paragraph once;
-        // cloned edges repeat in each further piece, one per line at most.
-        let edges: f32 = paragraphs
-            .iter()
-            .flatten()
-            .filter(|paragraph| paragraph.cloned)
-            .map(|paragraph| {
-                let pieces = paragraph.extents.len().min(context.column_count);
-                (paragraph.edge_start + paragraph.edge_end) * pieces.saturating_sub(1) as f32
-            })
-            .sum();
-        if let Some((group, balanced)) = balanced(paragraphs, context, ceiling + edges)
-            && let Some(balanced) = balanced_below(balanced, height)
-        {
-            return Some(finish_group(group.placements, balanced));
-        }
+        return Some(finish_group(group.placements, balanced));
     }
     let unbounded = FragmentationContext {
         column_count: usize::MAX,
@@ -2804,7 +2811,10 @@ fn fill_chunk_once(
                     // that places its edges, so in a column with nothing
                     // else the lines that fit stay and orphans and widows
                     // yield, as no later column would do better.
-                    let decorated = paragraph.edge_start > 0.0 || paragraph.edge_end > 0.0;
+                    // Balanced columns that could grow keep the orphans of
+                    // its first piece, and yield only the widows (Chromium).
+                    let decorated = (paragraph.edge_start > 0.0 || paragraph.edge_end > 0.0)
+                        && !(strict && start == 0 && fitting < paragraph.orphans);
                     // Orphans and widows also yield when the edge below the
                     // last line leaves no other break, as in Chromium.
                     end = if decorated && !column_has_content && fitting > start {
