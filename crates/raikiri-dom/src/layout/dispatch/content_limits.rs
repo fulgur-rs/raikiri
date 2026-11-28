@@ -431,6 +431,18 @@ fn vertical_inline_bounds(
         let style = tree.physical_style(idx);
         style.flex_wraps() && !style.flex_direction_is_row()
     };
+    // A wrapping column container measured at min-content room is as tall as
+    // at its stated width, which its lines share; its min-content inline size
+    // is that of its tallest item, as if each item had a line of its own.
+    // A container whose items cannot be measured on their own leaves the
+    // keywords that stand for that size unresolved.
+    let min_content = |tree: &mut LayoutSession<'_>| {
+        if wrapping_column {
+            tallest_item_inline_size(tree, node_id, inputs)
+        } else {
+            Some(measure(tree, AvailableSpace::MinContent))
+        }
+    };
     let mut resolved = [None, None];
     for (slot, keyword) in resolved
         .iter_mut()
@@ -439,19 +451,7 @@ fn vertical_inline_bounds(
         let expanded = keyword.expand();
         *slot = match expanded {
             ExpandedDimension::Stretch => stretch_limit_height(tree, idx, inputs),
-            // A wrapping column container measures as tall at min-content room
-            // as at its stated width, not as its tallest line, so the keywords
-            // that stand for that size are left unresolved.
-            ExpandedDimension::MinContent
-            | ExpandedDimension::FitContent
-            | ExpandedDimension::FitContentPx(_)
-            | ExpandedDimension::FitContentPercent(_)
-            | ExpandedDimension::FitContentCalc(_)
-                if wrapping_column =>
-            {
-                None
-            }
-            ExpandedDimension::MinContent => Some(measure(tree, AvailableSpace::MinContent)),
+            ExpandedDimension::MinContent => min_content(tree),
             ExpandedDimension::MaxContent => Some(measure(tree, AvailableSpace::MaxContent)),
             ExpandedDimension::FitContent
             | ExpandedDimension::FitContentPx(_)
@@ -470,11 +470,7 @@ fn vertical_inline_bounds(
                 let room = fit_content_room(tree, idx, expanded, inputs.parent_size.height, false)
                     .unwrap_or(offered);
                 let max_content = measure(tree, AvailableSpace::MaxContent);
-                Some(
-                    max_content
-                        .min(room)
-                        .max(measure(tree, AvailableSpace::MinContent)),
-                )
+                min_content(tree).map(|minimum| max_content.min(room).max(minimum))
             }
             _ => None,
         };
@@ -483,6 +479,111 @@ fn vertical_inline_bounds(
         min: resolved[0],
         max: resolved[1],
     }
+}
+
+/// The border-box height of the vertical flex container `node_id` at the
+/// min-content inline size of its tallest in-flow item, with the inline
+/// margins of the item: the min-content inline size of a container that wraps
+/// its items onto lines down its inline axis. `inputs` are those the
+/// container is measured with; its percentage padding refers to their width.
+///
+/// `None` where an item is not measured on its own: under size containment,
+/// when the container has a ratio, or when an item takes a size from the
+/// container (a percentage or `stretch` size, a ratio) or lays out on
+/// horizontal axes, whose lines break at a room the container gives it.
+fn tallest_item_inline_size(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: &LayoutInput,
+) -> Option<f32> {
+    let idx = usize::from(node_id);
+    let containment = tree.nodes[idx].size_containment;
+    if containment.width
+        || containment.height
+        || tree.physical_style(idx).stated_aspect_ratio().is_some()
+    {
+        return None;
+    }
+    let items: Vec<NodeId> = tree
+        .child_ids(node_id)
+        .filter(|&item| {
+            let child = usize::from(item);
+            !tree.nodes[child].is_display_none() && !is_oof_box(tree, child)
+        })
+        .collect();
+    if items
+        .iter()
+        .any(|&item| item_follows_container(tree, usize::from(item)))
+    {
+        return None;
+    }
+    let basis = inputs.parent_size.width;
+    let style = tree.physical_style(idx);
+    let padding = style.padding().resolve_or_zero(basis);
+    let border = style.border().resolve_or_zero(basis);
+    let edges = padding.top + padding.bottom + border.top + border.bottom;
+    let mut tallest = 0.0_f32;
+    for item in items {
+        let along = LayoutInput {
+            run_mode: RunMode::ComputeSize,
+            sizing_mode: SizingMode::InherentSize,
+            axis: RequestedAxis::Both,
+            known_dimensions: Size::NONE,
+            known_dimensions_are_definite: Size {
+                width: false,
+                height: false,
+            },
+            parent_size: Size::NONE,
+            available_space: Size {
+                width: AvailableSpace::MaxContent,
+                height: AvailableSpace::MinContent,
+            },
+            vertical_margins_are_collapsible: Line::FALSE,
+        };
+        let height = tree
+            .compute_child_layout_with_block_ctx(item, along, None)
+            .size
+            .height;
+        // A percentage margin refers to the size of the container, which
+        // this measure decides: it counts for nothing here.
+        let margin = tree
+            .physical_style(usize::from(item))
+            .margin()
+            .resolve_or_zero(None);
+        tallest = tallest.max(height + margin.top + margin.bottom);
+    }
+    Some(tallest + edges)
+}
+
+/// Whether the item `idx` of a vertical wrapping column takes a size from its
+/// container or lays out on horizontal axes (see [`tallest_item_inline_size`]).
+fn item_follows_container(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    let style = tree.physical_style(idx);
+    let relative = |size: Dimension| {
+        matches!(
+            size.expand(),
+            ExpandedDimension::Percent(_)
+                | ExpandedDimension::Calc(_)
+                | ExpandedDimension::FitContentPercent(_)
+                | ExpandedDimension::FitContentCalc(_)
+                | ExpandedDimension::Stretch
+        )
+    };
+    let relative_limit = |limit: LengthPercentageAuto| {
+        matches!(
+            limit.expand(),
+            ExpandedLengthPercentageAuto::Percent(_) | ExpandedLengthPercentageAuto::Calc(_)
+        )
+    };
+    let size = style.size();
+    let (min, max) = (style.min_size(), style.max_size());
+    !tree.has_vertical_writing_mode(idx)
+        || style.stated_aspect_ratio().is_some()
+        || relative(size.width)
+        || relative(size.height)
+        || [min.width, min.height, max.width, max.height]
+            .into_iter()
+            .any(relative_limit)
 }
 
 /// The border-box widths the keyword `min-width` and `max-width` of the
@@ -496,64 +597,71 @@ fn vertical_block_bounds(
     inputs: &LayoutInput,
 ) -> Bounds {
     let idx = usize::from(node_id);
-    // Browsers measure an intrinsic keyword along the block axis of a grid
-    // container, or of a flex container whose main axis is its inline axis,
-    // at the stated block size, which the tracks or the line stretch to fill:
-    // a grid with `width:300px;max-width:min-content` stays 300px wide. Those
-    // keywords are left unresolved here, so the box keeps its stated size.
-    let fills_stated_block_size = is_flex_grid_container(tree, idx)
-        && (tree.nodes[idx].layout_display() != Display::Flex
-            || tree.physical_style(idx).flex_direction_is_row());
-    let is_measured =
-        |size: Dimension| !size.is_auto() && !is_stretch(size) && !fills_stated_block_size;
-    let measured = (is_measured(limits.min.width) || is_measured(limits.max.width)).then(|| {
-        let mut along = *inputs;
-        along.run_mode = RunMode::ComputeSize;
-        along.axis = RequestedAxis::Both;
-        along.known_dimensions.width = None;
-        along.known_dimensions_are_definite.width = false;
-        along.vertical_margins_are_collapsible = Line::FALSE;
-        let percentage_height_basis = (is_oof_box(tree, idx) || is_flex_grid_item(tree, idx))
-            .then(|| content_percentage_height_basis(tree, idx, inputs))
-            .flatten();
-        let key = MeasureKey::new(
-            tree,
-            idx,
-            true,
-            &along,
-            Bounds::default(),
-            percentage_height_basis,
-        );
-        if let Some(height) = percentage_height_basis {
-            tree.context
-                .content_limit_percentage_height_bases
-                .push((idx, height));
-        }
-        use LengthProperty::*;
-        let width = probe(
-            tree,
-            node_id,
-            key,
-            along,
-            neutral_size_overrides(&[Width, MinWidth, MaxWidth]),
-        );
-        if percentage_height_basis.is_some() {
-            tree.context.content_limit_percentage_height_bases.pop();
-        }
-        width
-    });
-    let bound = |tree: &LayoutSession<'_>, size: Dimension| {
+    // Browsers measure an intrinsic keyword along the block axis of a flex
+    // container whose main axis is its inline axis at the stated block size,
+    // which the line stretches to fill, and so leave such a container its
+    // stated size. A grid container keeps its stated size against a keyword
+    // maximum, `width:300px;max-width:min-content` stays 300px wide, but grows
+    // to the block size of its content for a keyword minimum. Those keywords
+    // that leave the stated size are left unresolved here.
+    let flex_grid = is_flex_grid_container(tree, idx);
+    let row_flex = flex_grid
+        && tree.nodes[idx].layout_display() == Display::Flex
+        && tree.physical_style(idx).flex_direction_is_row();
+    let grid = flex_grid && tree.nodes[idx].layout_display() != Display::Flex;
+    let keeps_stated = |maximum: bool| row_flex || (grid && maximum);
+    let is_measured = |size: Dimension, maximum: bool| {
+        !size.is_auto() && !is_stretch(size) && !keeps_stated(maximum)
+    };
+    let measured = (is_measured(limits.min.width, false) || is_measured(limits.max.width, true))
+        .then(|| {
+            let mut along = *inputs;
+            along.run_mode = RunMode::ComputeSize;
+            along.axis = RequestedAxis::Both;
+            along.known_dimensions.width = None;
+            along.known_dimensions_are_definite.width = false;
+            along.vertical_margins_are_collapsible = Line::FALSE;
+            let percentage_height_basis = (is_oof_box(tree, idx) || is_flex_grid_item(tree, idx))
+                .then(|| content_percentage_height_basis(tree, idx, inputs))
+                .flatten();
+            let key = MeasureKey::new(
+                tree,
+                idx,
+                true,
+                &along,
+                Bounds::default(),
+                percentage_height_basis,
+            );
+            if let Some(height) = percentage_height_basis {
+                tree.context
+                    .content_limit_percentage_height_bases
+                    .push((idx, height));
+            }
+            use LengthProperty::*;
+            let width = probe(
+                tree,
+                node_id,
+                key,
+                along,
+                neutral_size_overrides(&[Width, MinWidth, MaxWidth]),
+            );
+            if percentage_height_basis.is_some() {
+                tree.context.content_limit_percentage_height_bases.pop();
+            }
+            width
+        });
+    let bound = |tree: &LayoutSession<'_>, size: Dimension, maximum: bool| {
         if is_stretch(size) {
             stretch_width(tree, idx, inputs)
-        } else if size.is_auto() {
+        } else if size.is_auto() || keeps_stated(maximum) {
             None
         } else {
             measured
         }
     };
     Bounds {
-        min: bound(tree, limits.min.width),
-        max: bound(tree, limits.max.width),
+        min: bound(tree, limits.min.width, false),
+        max: bound(tree, limits.max.width, true),
     }
 }
 
