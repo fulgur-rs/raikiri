@@ -64,9 +64,10 @@ pub(crate) struct FlowGeometry {
     /// that has no border or padding when the root shares its parent's
     /// formatting context.
     pub(crate) held_margins: Line<bool>,
-    /// The blocks of the paragraph are not laid out with its lines: the lines
-    /// stand as if the blocks took no room, and the caller places the blocks
-    /// once it knows where the lines end up.
+    /// The column spanners of the paragraph are not laid out with its lines:
+    /// the lines stand as if the spanners took no room, and the caller places
+    /// the spanners once it knows where the lines end up. Its other blocks
+    /// are laid out among the lines.
     pub(crate) blocks_apart: bool,
 }
 
@@ -481,6 +482,7 @@ pub(crate) fn place_lines(
         block_starts: Vec::new(),
         flow_end: 0.0,
         block_ends: Vec::new(),
+        block_boxes: Vec::new(),
         shifts: super::root::LineShifts::default(),
         fragment_box_placements: Vec::new(),
         fragmentainer_line_ranges: None,

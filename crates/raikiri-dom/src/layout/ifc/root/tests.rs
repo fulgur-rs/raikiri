@@ -25,6 +25,7 @@ fn debug_reports_fragment_box_placement_count() {
         block_starts: Vec::new(),
         flow_end: 0.0,
         block_ends: Vec::new(),
+        block_boxes: Vec::new(),
         shifts: Default::default(),
         fragment_box_placements: vec![IfcBoxFragment {
             node_id: 1,

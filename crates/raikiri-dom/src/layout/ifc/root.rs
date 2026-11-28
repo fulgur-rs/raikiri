@@ -183,6 +183,24 @@ impl LetterStyleIndex {
     }
 }
 
+/// Where the line layout of a paragraph put one of its block children, in
+/// block offsets from the content-box block-start edge, before any relative
+/// offset.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct BlockBox {
+    pub(crate) node: usize,
+    /// The start of the border box.
+    pub(crate) top: f32,
+    /// The end of the border box.
+    pub(crate) bottom: f32,
+    /// Where the margins after the block end, before what follows them.
+    pub(crate) end: f32,
+    pub(crate) first_baseline: Option<f32>,
+    /// Where the content before it ends, above the margins that collapse
+    /// with its top margin.
+    pub(crate) start: f32,
+}
+
 /// Lines broken for one content-box width.
 #[derive(Clone)]
 pub(crate) struct IfcLines {
@@ -258,6 +276,9 @@ pub(crate) struct IfcLines {
     /// content after it starts: below its border box and the margins that
     /// follow it. A fragmenting layout records none.
     pub(crate) block_ends: Vec<(usize, usize, f32)>,
+    /// Each block child of the root laid out with the lines, in document
+    /// order.
+    pub(crate) block_boxes: Vec<BlockBox>,
     /// Block offsets added to the lines by pagination: `(first line, delta)`
     /// moves that line and every later one down by `delta`, when a box of the
     /// paragraph was moved to a later page.
