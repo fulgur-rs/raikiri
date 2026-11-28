@@ -1180,3 +1180,34 @@ fn columns_after_the_last_spanner_fill_in_turn_on_each_page() {
         ],
     );
 }
+
+/// A column end before a box that avoids a break before it moves up to the
+/// break before the box above it, when the box then runs past the last
+/// column of the page, as Chromium prints it.
+#[test]
+fn an_avoided_column_end_moves_up_before_a_box_that_goes_on() {
+    let lines = |text: &str, count: usize| vec![text; count].join("<br>");
+    let body = format!(
+        "<div style='{COLUMNS}; column-gap: 16px; font: 10px/10px Ahem'><div id=x>{}</div><div id=a>aa</div>\
+         <div id=p style='break-before: avoid'>{}</div></div>",
+        lines("xx", 18),
+        lines("pp", 40),
+    );
+    check(
+        "avoided break before a box that goes on",
+        &body,
+        2,
+        &[
+            ("x", &[(0, 0.0, 0.0, 180.0)]),
+            ("a", &[(0, 200.0, 0.0, 10.0)]),
+            (
+                "p",
+                &[
+                    (0, 200.0, 10.0, 182.0),
+                    (1, 0.0, 0.0, 192.0),
+                    (1, 200.0, 0.0, 30.0),
+                ],
+            ),
+        ],
+    );
+}
