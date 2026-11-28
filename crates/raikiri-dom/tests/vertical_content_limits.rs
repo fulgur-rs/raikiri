@@ -194,8 +194,8 @@ fn a_flex_or_grid_container_takes_the_limit() {
         // A wrapping column is as tall as its lines side by side are wide at
         // its stated width.
         ("", "display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:5px;min-height:max-content", WRAPPED, (8.0, 8.0, 20.0, 45.0)),
-        // Its min-content height, the tallest line, is not measured: the
-        // box keeps its stated height.
+        // Its min-content height is that of its tallest item, 15px, below
+        // its stated height.
         ("", "display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:30px;min-height:min-content", WRAPPED, (8.0, 8.0, 20.0, 30.0)),
         // A keyword width limit of a column container is the block size of
         // its content; a grid or a row container keeps its stated width.
@@ -335,5 +335,84 @@ fn a_vertical_flow_resolves_the_limit_in_the_room_it_leaves() {
         ("<div style='writing-mode:vertical-lr;height:100px'><div id=b style='height:5px;min-height:fit-content;margin-top:20px;margin-bottom:10px'>xxxx yy zzzzz</div></div>", (8.0, 28.0, 20.0, 70.0)),
         ("<div style='writing-mode:vertical-lr;height:100px'><div style='float:left;width:20px;height:30px'></div><div id=b style='display:flow-root;height:300px;max-height:fit-content'>xxxx yy zzzzz</div></div>", (8.0, 38.0, 20.0, 70.0)),
         ("<div style='writing-mode:vertical-lr;height:100px'><div style='float:left;width:20px;height:30px'></div><div id=b style='display:flow-root;height:5px;min-height:fit-content'>xxxx yy zzzzz</div></div>", (8.0, 38.0, 20.0, 70.0)),
+    ]);
+}
+
+#[test]
+fn a_wrapping_column_takes_the_inline_size_of_its_tallest_item() {
+    // Its min-content inline size is that of its tallest item with its own
+    // padding and border; `fit-content` is offered the room within that and
+    // its max-content size.
+    #[rustfmt::skip]
+    assert_bodies(&[
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:5px;min-height:min-content'><div>xxxx yy</div><div>zz</div><div>qqq</div></div></div>", (8.0, 8.0, 20.0, 40.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:5px;min-height:fit-content'><div>xxxx yy</div><div>zz</div><div>qqq</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:30px;min-height:min-content'><div>xxxx yy</div><div>zz</div><div>qqq</div></div></div>", (8.0, 8.0, 20.0, 40.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:30px;min-height:fit-content'><div>xxxx yy</div><div>zz</div><div>qqq</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:200px;max-height:min-content'><div>xxxx yy</div><div>zz</div><div>qqq</div></div></div>", (8.0, 8.0, 20.0, 40.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:200px;max-height:fit-content'><div>xxxx yy</div><div>zz</div><div>qqq</div></div></div>", (8.0, 8.0, 20.0, 100.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:inline-flex;flex-direction:column;flex-wrap:wrap;width:20px;height:5px;min-height:min-content'><div>xxxx yy</div><div>zz</div><div>qqq</div></div></div>", (8.0, 8.0, 20.0, 40.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:5px;min-height:min-content;row-gap:3px'><div>xxxx yy</div><div>zz</div><div>qqq</div></div></div>", (8.0, 8.0, 20.0, 40.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:5px;min-height:min-content;padding:2px;border:1px solid'><div>xxxx yy</div><div>zz</div><div>qqq</div></div></div>", (8.0, 8.0, 20.0, 46.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:5px;min-height:min-content'><div style='width:10px;height:15px'></div><div style='width:15px;height:15px'></div><div style='width:10px;height:15px'></div></div></div>", (8.0, 8.0, 20.0, 15.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:5px;min-height:fit-content'><div style='width:10px;height:15px'></div><div style='width:15px;height:15px'></div><div style='width:10px;height:15px'></div></div></div>", (8.0, 8.0, 20.0, 45.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:30px;max-height:min-content'><div style='width:10px;height:15px'></div><div style='width:15px;height:15px'></div><div style='width:10px;height:15px'></div></div></div>", (8.0, 8.0, 20.0, 15.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:30px;min-height:fit-content'><div style='width:10px;height:15px'></div><div style='width:15px;height:15px'></div><div style='width:10px;height:15px'></div></div></div>", (8.0, 8.0, 20.0, 45.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:200px;max-height:min-content'><div style='width:10px;height:15px'></div><div style='width:15px;height:15px'></div><div style='width:10px;height:15px'></div></div></div>", (8.0, 8.0, 20.0, 15.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:200px;max-height:fit-content'><div style='width:10px;height:15px'></div><div style='width:15px;height:15px'></div><div style='width:10px;height:15px'></div></div></div>", (8.0, 8.0, 20.0, 45.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:inline-flex;flex-direction:column;flex-wrap:wrap;width:20px;height:5px;min-height:min-content'><div style='width:10px;height:15px'></div><div style='width:15px;height:15px'></div><div style='width:10px;height:15px'></div></div></div>", (8.0, 8.0, 20.0, 15.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:5px;min-height:min-content;row-gap:3px'><div style='width:10px;height:15px'></div><div style='width:15px;height:15px'></div><div style='width:10px;height:15px'></div></div></div>", (8.0, 8.0, 20.0, 15.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:5px;min-height:min-content;padding:2px;border:1px solid'><div style='width:10px;height:15px'></div><div style='width:15px;height:15px'></div><div style='width:10px;height:15px'></div></div></div>", (8.0, 8.0, 20.0, 21.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:5px;min-height:min-content'><div>xx</div><div>yyyyy</div><div>z</div><div>qq</div></div></div>", (8.0, 8.0, 20.0, 50.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:5px;min-height:fit-content'><div>xx</div><div>yyyyy</div><div>z</div><div>qq</div></div></div>", (8.0, 8.0, 20.0, 70.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:30px;min-height:min-content'><div>xx</div><div>yyyyy</div><div>z</div><div>qq</div></div></div>", (8.0, 8.0, 20.0, 50.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:30px;min-height:fit-content'><div>xx</div><div>yyyyy</div><div>z</div><div>qq</div></div></div>", (8.0, 8.0, 20.0, 70.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:200px;max-height:min-content'><div>xx</div><div>yyyyy</div><div>z</div><div>qq</div></div></div>", (8.0, 8.0, 20.0, 50.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:200px;max-height:fit-content'><div>xx</div><div>yyyyy</div><div>z</div><div>qq</div></div></div>", (8.0, 8.0, 20.0, 70.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:inline-flex;flex-direction:column;flex-wrap:wrap;width:20px;height:5px;min-height:min-content'><div>xx</div><div>yyyyy</div><div>z</div><div>qq</div></div></div>", (8.0, 8.0, 20.0, 50.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:5px;min-height:min-content;row-gap:3px'><div>xx</div><div>yyyyy</div><div>z</div><div>qq</div></div></div>", (8.0, 8.0, 20.0, 50.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:5px;min-height:min-content;padding:2px;border:1px solid'><div>xx</div><div>yyyyy</div><div>z</div><div>qq</div></div></div>", (8.0, 8.0, 20.0, 56.0)),
+    ]);
+}
+
+#[test]
+fn a_wrapping_column_keeps_its_stated_height_when_its_items_are_not_measured_alone() {
+    // Size containment ignores the items, a ratio sizes the container from
+    // its width, and an orthogonal empty item contributes no height.
+    #[rustfmt::skip]
+    assert_bodies(&[
+        ("<div><div id=b style='writing-mode:vertical-lr;display:flex;flex-direction:column;flex-wrap:wrap;contain:size;width:20px;height:5px;min-height:min-content'><div>xxxx yy</div></div></div>", (8.0, 8.0, 20.0, 5.0)),
+        ("<div><div id=b style='writing-mode:vertical-lr;display:flex;flex-direction:column;flex-wrap:wrap;width:20px;aspect-ratio:1/2;max-height:min-content'><div style='width:10px;height:10px'></div></div></div>", (8.0, 8.0, 20.0, 40.0)),
+        ("<div><div id=b style='writing-mode:vertical-lr;display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:5px;min-height:min-content'><div style='writing-mode:horizontal-tb'></div></div></div>", (8.0, 8.0, 20.0, 5.0)),
+    ]);
+}
+
+#[test]
+fn a_grid_grows_to_its_content_for_a_keyword_block_minimum() {
+    // A keyword `max-width` leaves the stated block size.
+    #[rustfmt::skip]
+    assert_bodies(&[
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:grid;width:5px;height:100px;min-width:min-content'>xxxx yy zz</div></div>", (8.0, 8.0, 10.0, 100.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:grid;width:5px;height:100px;min-width:min-content'><div>xxxx yy zz</div></div></div>", (8.0, 8.0, 10.0, 100.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:grid;width:5px;height:100px;min-width:max-content'>xxxx yy zz</div></div>", (8.0, 8.0, 10.0, 100.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:grid;width:5px;height:100px;min-width:max-content'><div>xxxx yy zz</div></div></div>", (8.0, 8.0, 10.0, 100.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:grid;width:5px;height:100px;min-width:fit-content'>xxxx yy zz</div></div>", (8.0, 8.0, 10.0, 100.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:grid;width:5px;height:100px;min-width:fit-content'><div>xxxx yy zz</div></div></div>", (8.0, 8.0, 10.0, 100.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:grid;width:5px;height:30px;min-width:min-content'>xxxx yy zz</div></div>", (8.0, 8.0, 30.0, 30.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:grid;width:5px;height:30px;min-width:min-content'><div>xxxx yy zz</div></div></div>", (8.0, 8.0, 30.0, 30.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:grid;width:5px;height:30px;min-width:max-content'>xxxx yy zz</div></div>", (8.0, 8.0, 30.0, 30.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:grid;width:5px;height:30px;min-width:max-content'><div>xxxx yy zz</div></div></div>", (8.0, 8.0, 30.0, 30.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:grid;width:5px;height:30px;min-width:fit-content'>xxxx yy zz</div></div>", (8.0, 8.0, 30.0, 30.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:grid;width:5px;height:30px;min-width:fit-content'><div>xxxx yy zz</div></div></div>", (8.0, 8.0, 30.0, 30.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:grid;width:5px;height:15px;min-width:min-content'>xxxx yy zz</div></div>", (8.0, 8.0, 30.0, 15.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:grid;width:5px;height:15px;min-width:min-content'><div>xxxx yy zz</div></div></div>", (8.0, 8.0, 30.0, 15.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:grid;width:5px;height:15px;min-width:max-content'>xxxx yy zz</div></div>", (8.0, 8.0, 30.0, 15.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:grid;width:5px;height:15px;min-width:max-content'><div>xxxx yy zz</div></div></div>", (8.0, 8.0, 30.0, 15.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:grid;width:5px;height:15px;min-width:fit-content'>xxxx yy zz</div></div>", (8.0, 8.0, 30.0, 15.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:grid;width:5px;height:15px;min-width:fit-content'><div>xxxx yy zz</div></div></div>", (8.0, 8.0, 30.0, 15.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:grid;width:5px;height:100px;max-width:min-content'>xxxx yy zz</div></div>", (8.0, 8.0, 5.0, 100.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:grid;width:5px;height:30px;max-width:min-content'>xxxx yy zz</div></div>", (8.0, 8.0, 5.0, 30.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:grid;width:5px;height:15px;max-width:min-content'>xxxx yy zz</div></div>", (8.0, 8.0, 5.0, 15.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:grid;width:300px;height:30px;max-width:min-content'>xxxx yy zz</div></div>", (8.0, 8.0, 300.0, 30.0)),
     ]);
 }
