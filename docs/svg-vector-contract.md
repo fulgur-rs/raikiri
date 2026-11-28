@@ -240,7 +240,7 @@ with either pixels or a scene, chosen by D6.
 - Inline `<svg>` goes through `Page::inline_svg`, which returns an
   `InlineSvg`: the `ImageContent` of the root, its viewport, the clip of the
   piece on the page (the part of the viewport inside the fragment, when a page
-  or column end cuts the root) and the host opacity that the consumer
+  end cuts the root) and the host opacity that the consumer
   composites around it. The picture is a scene
   unless the root's rendering (D6) is `raster`, and pixels, at
   `svg_raster_scale`, where D4 or a limit forces them; the policy is raikiri's

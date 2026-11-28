@@ -295,3 +295,42 @@ fn an_inline_svg_cut_by_the_page_end_is_clipped_to_the_page_area_on_each_page() 
         .collect();
     assert_eq!(clips, [(70.0, 740.0), (60.0, 290.0)]);
 }
+
+#[test]
+fn the_piece_of_a_cut_image_holding_only_its_padding_has_nothing_to_draw() {
+    // The content of each ends on the page it starts; the next page holds
+    // only its bottom padding, so neither the image nor the SVG picture is
+    // drawn there. The SVG root does not fit after the image's padding and
+    // starts the third page.
+    let pixels = Pixels::new();
+    let document = lay_out(
+        "<img src='image.png' style='width:300px;height:600px;padding-bottom:300px'>\
+         <svg width=300 height=600 style='display:block;padding-bottom:300px'>\
+         <rect width=300 height=600 fill=red /></svg>",
+        "@page{size:600px 800px;margin:60px 40px}",
+        &pixels,
+    );
+    let drawn: Vec<_> = document
+        .pages()
+        .map(|page| {
+            let (mut image, mut svg) = (None, None);
+            for fragment in page.fragments() {
+                match page.dom().local_name(fragment.node()) {
+                    Some("img") => image = Some(page.raster_image(&fragment, &pixels).is_some()),
+                    Some("svg") => svg = Some(page.inline_svg(&fragment).unwrap().is_some()),
+                    _ => {}
+                }
+            }
+            (image, svg)
+        })
+        .collect();
+    assert_eq!(
+        drawn,
+        [
+            (Some(true), None),
+            (Some(false), None),
+            (None, Some(true)),
+            (None, Some(false))
+        ]
+    );
+}
