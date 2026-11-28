@@ -165,8 +165,9 @@ fn supported_with_wrapped_blocks(
 }
 
 /// Whether `child` is a plain block with a block size of its own, nothing
-/// rendered inside it and no block margins: a box that a stream of paragraphs
-/// places whole in one column, as it has no lines to break between.
+/// rendered inside it and block margins of definite, non-negative lengths: a
+/// box that a stream of paragraphs places as one extent, with its margins
+/// beside it, as it has no lines to break between.
 pub(super) fn is_sized_leaf(tree: &LayoutSession<'_>, child: usize) -> bool {
     style_of(tree, child).clear() == Clear::None && is_sized_leaf_below_floats(tree, child)
 }
@@ -179,7 +180,7 @@ pub(super) fn is_sized_leaf_below_floats(tree: &LayoutSession<'_>, child: usize)
         && is_plain_box_but_clearance(tree, child, false, false)
         && !has_rendered_content(tree, child, false)
         && has_block_size(&style)
-        && block_margins(&style) == Some((0.0, 0.0))
+        && block_margins(&style).is_some()
 }
 
 /// Whether `child` is a plain block with nothing inside it, no block size and
