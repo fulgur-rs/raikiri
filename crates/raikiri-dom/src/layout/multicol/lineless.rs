@@ -14,7 +14,7 @@ use crate::fragment::{FragmentRect, LayoutFragment, MulticolGroup};
 use crate::layout::context::LayoutSession;
 use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
 use raikiri_layout_geometry::{Edges, Point};
-use raikiri_layout_style::values::ExpandedLengthPercentage;
+use raikiri_layout_style::values::{ExpandedLengthPercentage, ExpandedLengthPercentageAuto};
 use raikiri_style::property::{BorderCollapseValue, BreakInside, VerticalAlign};
 use std::collections::HashMap;
 
@@ -299,15 +299,15 @@ fn is_empty_block_with_inline_margins(tree: &LayoutSession<'_>, child: usize) ->
 fn is_plain_wrapper_ignoring_insets(tree: &LayoutSession<'_>, child: usize) -> bool {
     let style = style_of(tree, child);
     let margin = style.margin();
-    // A margin is linear in the width of its containing block, so one that
-    // is not negative for no width and for a very wide one is not negative
-    // for any width.
-    let not_negative = |value: LengthPercentageAuto| {
-        [0.0, 1.0e9].into_iter().all(|basis: f32| {
-            value
-                .maybe_resolve(Some(basis))
-                .is_none_or(|px: f32| px >= 0.0)
-        })
+    // A `calc()` margin can be negative for some widths of the containing
+    // block and not for others, so a wrapper with one keeps the other
+    // strategies.
+    let not_negative = |value: LengthPercentageAuto| match value.expand() {
+        ExpandedLengthPercentageAuto::Length(px) | ExpandedLengthPercentageAuto::Percent(px) => {
+            px >= 0.0
+        }
+        ExpandedLengthPercentageAuto::Auto => true,
+        ExpandedLengthPercentageAuto::Calc(_) => false,
     };
     block_margins_beside_inline(&style).is_some()
         && not_negative(margin.left)

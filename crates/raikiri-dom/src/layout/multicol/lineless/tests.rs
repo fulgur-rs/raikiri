@@ -888,10 +888,9 @@ fn a_wrapper_enters_the_stream_only_with_inline_margins_that_are_never_negative(
         ("margin-right:10%", true),
         ("margin-left:-5px", false),
         ("margin-right:-10%", false),
-        // Positive in a narrow wrapper, negative in a wide one.
+        // A `calc()` can be negative for some widths and not for others.
         ("margin-left:calc(5px - 20%)", false),
-        ("margin-left:calc(20% - 5px)", false),
-        ("margin-left:calc(5px + 20%)", true),
+        ("margin-left:calc(5px + 20%)", false),
     ] {
         let mut doc = crate::Document::new();
         let html = doc.append_element(Some(0), "html", None::<&str>);
