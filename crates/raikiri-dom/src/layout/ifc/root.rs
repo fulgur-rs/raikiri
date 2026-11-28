@@ -196,9 +196,9 @@ pub(crate) struct BlockBox {
     /// Where the margins after the block end, before what follows them.
     pub(crate) end: f32,
     pub(crate) first_baseline: Option<f32>,
-    /// Its own top margin collapsed with the margins of its first child that
-    /// collapse with it, signed; zero for a box its margins collapse through.
-    pub(crate) top_margin: f32,
+    /// Where the content before it ends, above the margins that collapse
+    /// with its top margin.
+    pub(crate) start: f32,
 }
 
 /// Lines broken for one content-box width.

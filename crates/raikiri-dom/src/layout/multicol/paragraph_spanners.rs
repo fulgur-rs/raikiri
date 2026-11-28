@@ -246,16 +246,16 @@ fn block_box(lines: &IfcLines, index: usize, node: usize) -> BlockBox {
             bottom: 0.0,
             end: 0.0,
             first_baseline: None,
-            top_margin: 0.0,
+            start: 0.0,
         })
 }
 
 /// The units of the group of `lines` in `range` with the `blocks` among them,
 /// each with its block-start and block-end offsets from the content box. A
 /// block comes with the index of the first line after it and its index among
-/// the blocks of the paragraph. A block that starts the group keeps its top
-/// margin in the first column, which no break precedes, so its unit starts
-/// above the margin. Also the offset where the content of the group ends,
+/// the blocks of the paragraph. A block that starts the group keeps the
+/// margins above it in the first column, which no break precedes, so its
+/// unit starts where the content before it ends. Also the offset where the content of the group ends,
 /// below the margins of a block that ends it.
 fn units_of(
     lines: &IfcLines,
@@ -269,7 +269,7 @@ fn units_of(
         while let Some(&(node, _, index)) = pending.next_if(|&&(_, after, _)| after <= line) {
             let block = block_box(lines, index, node);
             let top = if units.is_empty() {
-                block.top - block.top_margin
+                block.start
             } else {
                 block.top
             };

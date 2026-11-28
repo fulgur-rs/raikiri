@@ -6646,6 +6646,19 @@ fn an_empty_block_that_starts_the_columns_leaves_its_margins_below_it() {
     lay_out_in_ahem(&mut doc, 180.0, 260.0);
     assert_eq!(box_rect(&doc, boxes[0]), (0.0, 0.0, 40.0, 0.0));
     assert_eq!(column_ranges(&doc, container), [(0, 2, 0, 0.0, 30.0)]);
+
+    // With a top margin as well, the margins collapse through it 30px down,
+    // where the lines start too.
+    let (mut doc, container, boxes) = column_container(
+        "height:200px;column-fill:auto",
+        &[
+            Part::Box("display:block;margin-top:30px;margin-bottom:10px"),
+            Part::Lines(2),
+        ],
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 260.0);
+    assert_eq!(box_rect(&doc, boxes[0]), (0.0, 30.0, 40.0, 0.0));
+    assert_eq!(column_ranges(&doc, container), [(0, 2, 0, 0.0, 30.0)]);
 }
 
 #[test]
