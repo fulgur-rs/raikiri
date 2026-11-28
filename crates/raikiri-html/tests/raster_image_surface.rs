@@ -232,3 +232,66 @@ fn empty_objects_overflowing_placements_and_denied_pixels_are_omitted() {
         assert!(page.raster_image(&fragment, &source).is_none(), "{css}");
     }
 }
+
+/// The vertical extent `(top, bottom)` of the clip of the image on each page.
+fn clipped_extents(css: &str) -> Vec<(f32, f32)> {
+    let pixels = Pixels::new();
+    let document = lay_out("<div><img src='image.png'></div><p>after</p>", css, &pixels);
+    document
+        .pages()
+        .filter_map(|page| {
+            let fragment = page
+                .fragments()
+                .find(|fragment| page.dom().local_name(fragment.node()) == Some("img"))?;
+            let image = page.raster_image(&fragment, &pixels).unwrap();
+            let clip = image.clip.rect;
+            Some((clip.y, clip.y + clip.height))
+        })
+        .collect()
+}
+
+#[test]
+fn an_image_cut_by_the_page_end_is_clipped_to_the_page_area_on_each_page() {
+    // Chromium prints the 900px image on a 800px page with 60px margins
+    // from y=60 to 740 on the first page and from 60 to 280 on the second;
+    // nothing is drawn into the page margins.
+    assert_eq!(
+        clipped_extents("@page{size:600px 800px;margin:60px 40px}img{width:300px;height:900px}"),
+        [(60.0, 740.0), (60.0, 280.0)]
+    );
+    // With a border, the content edge starts below it on the first page and
+    // ends above it on the last.
+    assert_eq!(
+        clipped_extents(
+            "@page{size:600px 800px;margin:60px 40px}\
+             img{width:300px;height:900px;border:10px solid}"
+        ),
+        [(70.0, 740.0), (60.0, 290.0)]
+    );
+}
+
+#[test]
+fn an_inline_svg_cut_by_the_page_end_is_clipped_to_the_page_area_on_each_page() {
+    // Chromium prints the bordered 900px SVG root like the bordered image:
+    // its picture from y=70 to 740 on the first page and from 60 to 290 on
+    // the second.
+    let pixels = Pixels::new();
+    let document = lay_out(
+        "<div><svg width=300 height=900 style='display:block;border:10px solid'>\
+         <rect width=300 height=900 fill=red /></svg></div><p>after</p>",
+        "@page{size:600px 800px;margin:60px 40px}",
+        &pixels,
+    );
+    let clips: Vec<_> = document
+        .pages()
+        .filter_map(|page| {
+            let fragment = page
+                .fragments()
+                .find(|fragment| page.dom().local_name(fragment.node()) == Some("svg"))?;
+            let svg = page.inline_svg(&fragment).unwrap().unwrap();
+            assert_eq!(svg.viewport.height, 900.0);
+            Some((svg.clip.y, svg.clip.y + svg.clip.height))
+        })
+        .collect();
+    assert_eq!(clips, [(70.0, 740.0), (60.0, 290.0)]);
+}
