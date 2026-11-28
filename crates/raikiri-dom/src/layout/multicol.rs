@@ -3754,9 +3754,15 @@ impl ColumnStack {
 }
 
 /// Whether `child` is a box with no lines that a column end slices wherever
-/// it falls (CSS Fragmentation 3, 4.4), with no margins to keep with it.
+/// it falls (CSS Fragmentation 3, 4.4), with no margins to keep with it. The
+/// columns here place a sliced box from its border box, so one with block
+/// margins goes whole to a column.
 fn slices_at_column_end(tree: &LayoutSession<'_>, child: usize) -> bool {
-    lineless::is_sized_leaf_below_floats(tree, child) && lineless::slices_sized_leaf(tree, child)
+    let margin = tree.nodes[child].layout.margin;
+    margin.top == 0.0
+        && margin.bottom == 0.0
+        && lineless::is_sized_leaf_below_floats(tree, child)
+        && lineless::slices_sized_leaf(tree, child)
 }
 
 /// A measured child of a column container where it stands in one column:
