@@ -3106,6 +3106,18 @@ pub(super) fn sliced_rect(rect: FragmentRect, whole: Option<(f32, f32)>) -> Frag
     }
 }
 
+/// Whether `child`, a block among the lines of a paragraph, is a box with
+/// nothing inside it but its own block size, which the column ends may cut
+/// (see [`slices_sized_leaf`]). Its margins stand between it and the lines
+/// around it, so they may be of any size.
+pub(super) fn slices_among_lines(tree: &LayoutSession<'_>, child: usize) -> bool {
+    layout_node(tree, child).display() == DisplayValue::Block
+        && is_plain_box_but_clearance(tree, child, false, false, false)
+        && !has_rendered_content(tree, child, false)
+        && has_block_size(&style_of(tree, child))
+        && slices_sized_leaf(tree, child)
+}
+
 /// Whether the column ends may cut `idx`, a sized box with nothing inside it,
 /// with its pieces painted as [`slices_decorations`] says: a box that avoids
 /// breaks, one that is monolithic, one that repeats its decorations at each

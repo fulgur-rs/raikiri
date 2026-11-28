@@ -3115,6 +3115,7 @@ fn measure_ifc_root(
     // another container.
     if perform && group_baselines.is_none() {
         tree.nodes[idx].multicol_groups.clear();
+        crate::layout::multicol::paragraph_spanners::retire_pieces(tree, &probe);
     }
     // The fragments of a paragraph laid out across the columns by the engine
     // come with its lines; only the ones split here still hold the boxes where

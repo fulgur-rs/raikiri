@@ -1,8 +1,11 @@
 //! A break between columns that `break-before` or `break-after` avoids
 //! (`avoid` or `avoid-column`) is not taken: the column ends at the last
-//! break before it that nothing avoids, and the box after that break starts
-//! the next column. Balanced columns grow when no such break is left in a
-//! column (CSS Fragmentation 3, 4.4; CSS Multi-column 1, section 7.1).
+//! break before it that nothing avoids, and the box or line after that break
+//! starts the next column. A break between the lines of a paragraph that
+//! leaves fewer lines than its orphans or widows is taken only when no other
+//! break is left, as Chromium does. Balanced columns grow when no such break
+//! is left in a column (CSS Fragmentation 3, 4.4; CSS Multi-column 1,
+//! section 7.1).
 //!
 //! The expected border boxes are the ones Chromium computes for the same
 //! markup in an 800px by 600px viewport, with no margin on the body and 10px
@@ -659,6 +662,279 @@ const CASES: &[Case] = &[
             ("d", (100.0, 10.0, 100.0, 10.0)),
             ("e", (200.0, 0.0, 100.0, 10.0)),
             ("f", (200.0, 10.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "avoid_moves_the_column_end_between_lines_short_of_widows",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px\"><div id=a>aa<br>aa<br>aa</div><div id=b style='break-before:avoid'>bb</div><div id=k style='break-before:avoid'>kk</div><div id=d>dd</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 30.0)),
+            ("a", (0.0, 0.0, 100.0, 30.0)),
+            ("a", (100.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 10.0, 100.0, 10.0)),
+            ("k", (100.0, 20.0, 100.0, 10.0)),
+            ("d", (200.0, 0.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "avoid_moves_the_column_end_between_lines_short_of_orphans",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px\"><div id=a style='orphans:3'>aa<br>aa<br>aa</div><div id=b style='break-before:avoid'>bb</div><div id=k style='break-before:avoid'>kk</div><div id=d>dd</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 30.0)),
+            ("a", (0.0, 0.0, 100.0, 30.0)),
+            ("a", (100.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 10.0, 100.0, 10.0)),
+            ("k", (100.0, 20.0, 100.0, 10.0)),
+            ("d", (200.0, 0.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "avoid_in_fill_auto_columns_moves_the_column_end_between_lines",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px;height:30px;column-fill:auto\"><div id=a>aa<br>aa<br>aa</div><div id=b style='break-before:avoid'>bb</div><div id=d>dd</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 30.0)),
+            ("a", (0.0, 0.0, 100.0, 30.0)),
+            ("a", (100.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 10.0, 100.0, 10.0)),
+            ("d", (100.0, 20.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "avoid_prefers_a_break_between_blocks_to_one_short_of_orphans",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px\"><div id=p>pp</div><div id=a>aa<br>aa</div><div id=b style='break-before:avoid'>bb</div><div id=d>dd</div><div id=e>ee</div><div id=f>ff</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 30.0)),
+            ("p", (0.0, 0.0, 100.0, 10.0)),
+            ("a", (100.0, 0.0, 100.0, 20.0)),
+            ("b", (100.0, 20.0, 100.0, 10.0)),
+            ("d", (200.0, 0.0, 100.0, 10.0)),
+            ("e", (200.0, 10.0, 100.0, 10.0)),
+            ("f", (200.0, 20.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "avoid_in_fill_auto_columns_prefers_a_break_between_blocks",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px;height:30px;column-fill:auto\"><div id=p>pp</div><div id=a>aa<br>aa</div><div id=b style='break-before:avoid'>bb</div><div id=d>dd</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 30.0)),
+            ("p", (0.0, 0.0, 100.0, 10.0)),
+            ("a", (100.0, 0.0, 100.0, 20.0)),
+            ("b", (100.0, 20.0, 100.0, 10.0)),
+            ("d", (200.0, 0.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "avoid_moves_the_column_end_between_lines_with_one_widow_allowed",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px;height:30px;column-fill:auto\"><div id=a style='widows:1;orphans:1'>aa<br>aa<br>aa</div><div id=b style='break-before:avoid'>bb</div><div id=d>dd</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 30.0)),
+            ("a", (0.0, 0.0, 100.0, 30.0)),
+            ("a", (100.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 10.0, 100.0, 10.0)),
+            ("d", (100.0, 20.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "avoid_moves_the_column_end_to_lines_keeping_orphans_and_widows",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px;height:40px;column-fill:auto\"><div id=a>aa<br>aa<br>aa<br>aa</div><div id=b style='break-before:avoid'>bb</div><div id=d>dd</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 40.0)),
+            ("a", (0.0, 0.0, 100.0, 40.0)),
+            ("a", (100.0, 0.0, 100.0, 20.0)),
+            ("b", (100.0, 20.0, 100.0, 10.0)),
+            ("d", (100.0, 30.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "avoid_moves_the_column_end_between_lines_pushed_by_orphans",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px\"><div id=p>pp<br>xx</div><div id=a>aa<br>aa<br>aa</div><div id=b style='break-before:avoid'>bb</div><div id=d>dd</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 30.0)),
+            ("p", (0.0, 0.0, 100.0, 20.0)),
+            ("a", (100.0, 0.0, 100.0, 30.0)),
+            ("a", (200.0, 0.0, 100.0, 10.0)),
+            ("b", (200.0, 10.0, 100.0, 10.0)),
+            ("d", (200.0, 20.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "avoid_keeps_the_lines_of_a_paragraph_avoiding_breaks_inside",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px;height:30px;column-fill:auto\"><div id=a style='break-inside:avoid'>aa<br>aa<br>aa</div><div id=b style='break-before:avoid'>bb</div><div id=d>dd</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 30.0)),
+            ("a", (0.0, 0.0, 100.0, 30.0)),
+            ("b", (100.0, 0.0, 100.0, 10.0)),
+            ("d", (100.0, 10.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "avoid_moves_the_column_end_between_lines_inside_a_wrapper",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px;height:30px;column-fill:auto\"><div><div id=a>aa<br>aa<br>aa</div></div><div id=b style='break-before:avoid'>bb</div><div id=d>dd</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 30.0)),
+            ("a", (0.0, 0.0, 100.0, 30.0)),
+            ("a", (100.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 10.0, 100.0, 10.0)),
+            ("d", (100.0, 20.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "avoid_after_moves_the_column_end_between_lines",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px;height:30px;column-fill:auto\"><div id=a style='break-after:avoid'>aa<br>aa<br>aa</div><div id=b>bb</div><div id=d>dd</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 30.0)),
+            ("a", (0.0, 0.0, 100.0, 30.0)),
+            ("a", (100.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 10.0, 100.0, 10.0)),
+            ("d", (100.0, 20.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "avoid_moves_the_column_end_between_lines_of_balanced_columns",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px\"><div id=a>aa<br>aa<br>aa<br>aa</div><div id=b style='break-before:avoid'>bb</div><div id=d>dd</div><div id=e>ee</div><div id=f>ff</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 30.0)),
+            ("a", (0.0, 0.0, 100.0, 30.0)),
+            ("a", (100.0, 0.0, 100.0, 20.0)),
+            ("b", (100.0, 20.0, 100.0, 10.0)),
+            ("d", (200.0, 0.0, 100.0, 10.0)),
+            ("e", (200.0, 10.0, 100.0, 10.0)),
+            ("f", (200.0, 20.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "two_avoided_breaks_move_the_column_end_between_lines",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px;height:30px;column-fill:auto\"><div id=a>aa<br>aa<br>aa</div><div id=b style='break-before:avoid'>bb</div><div id=c style='break-before:avoid'>cc</div><div id=d>dd</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 30.0)),
+            ("a", (0.0, 0.0, 100.0, 30.0)),
+            ("a", (100.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 10.0, 100.0, 10.0)),
+            ("c", (100.0, 20.0, 100.0, 10.0)),
+            ("d", (200.0, 0.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "avoid_moves_the_column_end_between_lines_above_a_margin",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px;height:30px;column-fill:auto\"><div id=a style='margin-bottom:5px'>aa<br>aa<br>aa</div><div id=b style='break-before:avoid'>bb</div><div id=d>dd</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 30.0)),
+            ("a", (0.0, 0.0, 100.0, 30.0)),
+            ("a", (100.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 15.0, 100.0, 10.0)),
+            ("d", (200.0, 0.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "avoid_moves_the_column_end_between_lines_short_of_three_widows",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px;height:30px;column-fill:auto\"><div id=a style='widows:3'>aa<br>aa<br>aa</div><div id=b style='break-before:avoid'>bb</div><div id=d>dd</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 30.0)),
+            ("a", (0.0, 0.0, 100.0, 30.0)),
+            ("a", (100.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 10.0, 100.0, 10.0)),
+            ("d", (100.0, 20.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "avoid_moves_the_column_end_to_the_last_line_break_keeping_widows",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px;height:50px;column-fill:auto\"><div id=a>aa<br>aa<br>aa<br>aa<br>aa</div><div id=b style='break-before:avoid'>bb</div><div id=d>dd</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 50.0)),
+            ("a", (0.0, 0.0, 100.0, 50.0)),
+            ("a", (100.0, 0.0, 100.0, 20.0)),
+            ("b", (100.0, 20.0, 100.0, 10.0)),
+            ("d", (100.0, 30.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "avoid_moves_no_column_end_into_a_paragraph_from_an_earlier_column",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px;height:30px;column-fill:auto\"><div id=a>aa<br>aa<br>aa<br>aa<br>aa<br>aa</div><div id=b style='break-before:avoid'>bb</div><div id=d>dd</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 30.0)),
+            ("a", (0.0, 0.0, 100.0, 30.0)),
+            ("a", (100.0, 0.0, 100.0, 30.0)),
+            ("b", (200.0, 0.0, 100.0, 10.0)),
+            ("d", (200.0, 10.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "avoid_moves_no_column_end_into_lines_from_an_earlier_column",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px;height:40px;column-fill:auto\"><div id=a>aa<br>aa<br>aa<br>aa<br>aa<br>aa<br>aa<br>aa</div><div id=b style='break-before:avoid'>bb</div><div id=d>dd</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 40.0)),
+            ("a", (0.0, 0.0, 100.0, 40.0)),
+            ("a", (100.0, 0.0, 100.0, 40.0)),
+            ("b", (200.0, 0.0, 100.0, 10.0)),
+            ("d", (200.0, 10.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "avoid_moves_the_column_end_to_lines_of_a_taller_column",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px;height:40px;column-fill:auto\"><div id=a>aa<br>aa<br>aa<br>aa<br>aa<br>aa<br>aa</div><div id=b style='break-before:avoid'>bb</div><div id=d>dd</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 40.0)),
+            ("a", (0.0, 0.0, 100.0, 40.0)),
+            ("a", (100.0, 0.0, 100.0, 30.0)),
+            ("b", (100.0, 30.0, 100.0, 10.0)),
+            ("d", (200.0, 0.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "avoid_moves_the_column_end_between_lines_of_five",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px\"><div id=a>aa<br>aa<br>aa<br>aa<br>aa</div><div id=b style='break-before:avoid'>bb</div><div id=d>dd</div><div id=e>ee</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 30.0)),
+            ("a", (0.0, 0.0, 100.0, 30.0)),
+            ("a", (100.0, 0.0, 100.0, 20.0)),
+            ("b", (100.0, 20.0, 100.0, 10.0)),
+            ("d", (200.0, 0.0, 100.0, 10.0)),
+            ("e", (200.0, 10.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "avoid_moves_no_column_end_into_a_paragraph_cut_after_a_block",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px;height:30px;column-fill:auto\"><div id=p>pp</div><div id=a>aa<br>aa<br>aa<br>aa<br>aa</div><div id=b style='break-before:avoid'>bb</div><div id=d>dd</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 30.0)),
+            ("p", (0.0, 0.0, 100.0, 10.0)),
+            ("a", (0.0, 10.0, 100.0, 20.0)),
+            ("a", (100.0, 0.0, 100.0, 30.0)),
+            ("b", (200.0, 0.0, 100.0, 10.0)),
+            ("d", (200.0, 10.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "avoid_moves_the_column_end_between_lines_below_padding",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px;height:31px;column-fill:auto\"><div id=a style='padding-top:1px'>aa<br>aa<br>aa</div><div id=b style='break-before:avoid'>bb</div><div id=d>dd</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 31.0)),
+            ("a", (0.0, 0.0, 100.0, 31.0)),
+            ("a", (100.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 10.0, 100.0, 10.0)),
+            ("d", (100.0, 20.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "avoid_moves_the_column_end_between_lines_with_cloned_padding",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px;height:32px;column-fill:auto\"><div id=a style='padding:1px 0;box-decoration-break:clone'>aa<br>aa<br>aa</div><div id=b style='break-before:avoid'>bb</div><div id=d>dd</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 32.0)),
+            ("a", (0.0, 0.0, 100.0, 32.0)),
+            ("a", (100.0, 0.0, 100.0, 12.0)),
+            ("b", (100.0, 12.0, 100.0, 10.0)),
+            ("d", (100.0, 22.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "avoid_moves_the_column_end_between_lines_below_a_border",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px;height:32px;column-fill:auto\"><div id=a style='border-top:2px solid'>aa<br>aa<br>aa</div><div id=b style='break-before:avoid'>bb</div><div id=d>dd</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 32.0)),
+            ("a", (0.0, 0.0, 100.0, 32.0)),
+            ("a", (100.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 10.0, 100.0, 10.0)),
+            ("d", (100.0, 20.0, 100.0, 10.0)),
         ],
     },
 ];
