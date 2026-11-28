@@ -633,6 +633,7 @@ fn a_grid_keeps_its_height_against_a_keyword_maximum_only_with_a_row_that_stretc
         ("<div id=b style='display:grid;width:40px;height:100px;grid-template-rows:20px;grid-auto-flow:column dense;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 40.0, 20.0)),
         ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 40.0, 100.0)),
         ("<div id=b style='display:grid;width:40px;height:100px;grid-template-rows:min-content;grid-auto-flow:column;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 40.0, 10.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template-rows:repeat(auto-fill,minmax(20px,auto));max-height:min-content'><div>xx</div><div>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
         ("<div id=b style='display:grid;width:40px;height:100px;grid-auto-rows:20px auto;max-height:min-content'><div>xx</div></div>", (8.0, 8.0, 40.0, 20.0)),
         ("<div id=b style='display:grid;width:40px;height:100px;grid-auto-rows:20px auto;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 40.0, 100.0)),
         ("<div id=b style='display:grid;width:40px;height:100px;grid-auto-rows:auto 20px;max-height:min-content'><div>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
@@ -669,6 +670,51 @@ fn a_grid_counts_the_implicit_rows_its_placed_items_bring_in() {
         ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;grid-auto-flow:column;max-height:min-content'><div style='grid-row:2'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
         ("<div id=b style='display:grid;width:40px;height:100px;grid-template-rows:20px;grid-auto-rows:10px;max-height:min-content'><div style='grid-row:1/3'>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 40.0)),
         ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-row:auto/2'>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+    ]);
+}
+
+#[test]
+fn a_grid_follows_automatic_placement_to_the_rows_it_makes() {
+    // Columns that placed items bring in hold the items placed
+    // automatically, which a sparse cursor never moves back to and dense
+    // packing fills from the start.
+    #[rustfmt::skip]
+    assert_bodies(&[
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-column:2'>xx</div><div style='grid-column:3'>xx</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-column:2'>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-column:2'>xx</div><div style=''>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-column:-3'>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-column:span 2'>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-column:1'>xx</div><div style='grid-column:1'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-column:2'>xx</div><div style='grid-column:1'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;grid-auto-flow:dense;max-height:min-content'><div style='grid-column:2'>xx</div><div style='grid-column:1'>xx</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-row:1'>xx</div><div style='grid-row:1'>xx</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;grid-auto-flow:column;max-height:min-content'><div style='grid-row:1'>xx</div><div style='grid-row:1'>xx</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;grid-auto-flow:column;max-height:min-content'><div style='grid-column:1'>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;grid-auto-flow:column;max-height:min-content'><div style='grid-row:span 2'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px 20px / 20px 20px;max-height:min-content'><div style='grid-area:1/1/3/3'>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px 20px / 20px 20px;grid-auto-rows:10px;max-height:min-content'><div style='grid-area:1/1/3/3'>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 50.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px 20px / 20px 20px;max-height:min-content'><div style='grid-area:1/2'>xx</div><div style='grid-column:span 2'>xx</div></div>", (8.0, 8.0, 40.0, 40.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px 20px / 20px 20px;grid-auto-flow:row dense;max-height:min-content'><div style='grid-area:1/2'>xx</div><div style='grid-column:span 2'>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 40.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px 20px / 20px 20px;max-height:min-content'><div style='grid-area:1/2'>xx</div><div style='grid-column:span 2'>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template-columns:20px 20px;max-height:min-content'><div style='grid-row:2'>xx</div><div style=''>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-row:1;grid-column:1'>xx</div><div style='grid-row:1'>xx</div></div>", (8.0, 8.0, 40.0, 20.0)),
+    ]);
+}
+
+#[test]
+fn a_grid_with_columns_that_repeat_to_fill_it_counts_rows_from_its_items() {
+    // How many columns repeat depends on the width, so every item is taken
+    // to fit in the explicit rows and only the rows it is placed on, or the
+    // rows a grid without any needs, are implicit.
+    #[rustfmt::skip]
+    assert_bodies(&[
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template-columns:repeat(auto-fill,20px);grid-auto-rows:10px auto;max-height:min-content'><div style='grid-row:1'>xx</div></div>", (8.0, 8.0, 40.0, 10.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template-columns:repeat(auto-fill,20px);grid-auto-rows:10px auto;max-height:min-content'><div style='grid-row:2'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template-columns:repeat(auto-fill,20px);grid-auto-rows:10px auto;max-height:min-content'><div style='grid-row:-2'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template-columns:repeat(auto-fill,20px);grid-auto-rows:10px auto;grid-auto-flow:column;max-height:min-content'><div style=''>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 10.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template-columns:repeat(auto-fill,20px);grid-auto-rows:10px auto;grid-auto-flow:column;max-height:min-content'><div style='grid-row:span 2'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / repeat(auto-fill,20px);grid-auto-rows:10px auto;max-height:min-content'><div style=''>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 20.0)),
     ]);
 }
 

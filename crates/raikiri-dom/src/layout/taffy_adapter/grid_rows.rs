@@ -236,48 +236,47 @@ pub(crate) fn some_row_stretches<'a>(
             }
         })
     });
-    // Rows that an automatic repetition fills leave no line to count from.
-    let line_count = i32::try_from(rows).ok();
-    let mut after = 0_usize;
-    let mut before = 0_usize;
-    let mut occupied = 0_usize;
-    let mut automatic = 0_usize;
-    let mut automatic_span = 0_usize;
-    for item in items {
-        let placement = TaffyStyle::new(item).grid_row();
-        match line_count.and_then(|count| definite_lines(&placement, count)) {
-            Some((start, end)) => {
-                let count = line_count.unwrap_or_default();
-                after = after.max(usize::try_from(end - count).unwrap_or_default());
-                before = before.max(usize::try_from(-start).unwrap_or_default());
-                occupied += usize::from(start < count && end > 0);
-            }
-            None => {
-                automatic += 1;
-                automatic_span =
-                    automatic_span.max(span_of(&placement.start).max(span_of(&placement.end)));
-            }
-        }
-    }
-    if automatic > 0 {
-        after = after.max(automatic_span.saturating_sub(rows));
-    }
-    // A column flow places the items that overflow the explicit grid in new
-    // columns, so only a row flow makes rows for them.
-    if matches!(
+    let row_flow = matches!(
         style.grid_auto_flow(),
         taffy::GridAutoFlow::Row | taffy::GridAutoFlow::RowDense
-    ) {
-        let free = rows.saturating_mul(columns.max(1)).saturating_sub(occupied);
-        // How many columns an automatic repetition gives depends on the
-        // width, so each item is then taken to start a row of its own.
-        let per_row = if columns == usize::MAX {
-            1
-        } else {
-            columns.max(1)
-        };
-        after = after.max(automatic.saturating_sub(free).div_ceil(per_row));
-    }
+    );
+    let dense = matches!(
+        style.grid_auto_flow(),
+        taffy::GridAutoFlow::RowDense | taffy::GridAutoFlow::ColumnDense
+    );
+    let placements = items
+        .into_iter()
+        .map(|item| {
+            let item = TaffyStyle::new(item);
+            (item.grid_row(), item.grid_column())
+        })
+        .collect::<Vec<_>>();
+    let (before, after) = match (i32::try_from(rows), i32::try_from(columns)) {
+        (Ok(row_count), Ok(column_count)) => {
+            let axes = |(row, column): &(Line<GridPlacement<SmolStr>>, _)| {
+                let row = AxisPlacement::of(row, row_count);
+                let column = AxisPlacement::of(column, column_count);
+                if row_flow {
+                    [row, column]
+                } else {
+                    [column, row]
+                }
+            };
+            let items = placements.iter().map(axes).collect::<Vec<_>>();
+            let counts = if row_flow {
+                [row_count, column_count]
+            } else {
+                [column_count, row_count]
+            };
+            let extents = placed_extents(&items, counts, dense);
+            let (start, end) = extents[usize::from(!row_flow)];
+            (
+                usize::try_from(-start).unwrap_or_default(),
+                usize::try_from(end - row_count).unwrap_or_default(),
+            )
+        }
+        _ => estimated_implicit_rows(&placements, rows, row_flow),
+    };
     // The implicit rows after the explicit grid take the entries of
     // `grid-auto-rows` in turn from the first, and those before it from the
     // last, so an entry no row reaches sizes nothing.
@@ -298,7 +297,10 @@ fn definite_lines(placement: &Line<GridPlacement<SmolStr>>, count: i32) -> Optio
         }
         _ => None,
     };
-    let span = |placement: &GridPlacement<SmolStr>| i32::try_from(span_of(placement)).unwrap_or(1);
+    let span = |placement: &GridPlacement<SmolStr>| match placement {
+        GridPlacement::Span(span) => i32::from(*span).max(1),
+        _ => 1,
+    };
     match (line(&placement.start), line(&placement.end)) {
         (Some(start), Some(end)) if start == end => Some((start, start + 1)),
         (Some(start), Some(end)) => Some((start.min(end), start.max(end))),
@@ -308,12 +310,203 @@ fn definite_lines(placement: &Line<GridPlacement<SmolStr>>, count: i32) -> Optio
     }
 }
 
-/// The tracks a placement spans: its `span` count, or one.
-fn span_of(placement: &GridPlacement<SmolStr>) -> usize {
-    match placement {
+/// The tracks a placement that no numbered line fixes spans: the count of a
+/// `span` at either end, or one.
+fn span_of(placement: &Line<GridPlacement<SmolStr>>) -> usize {
+    let span = |placement: &GridPlacement<SmolStr>| match placement {
         GridPlacement::Span(span) => usize::from(*span).max(1),
         _ => 1,
+    };
+    span(&placement.start).max(span(&placement.end))
+}
+
+/// The placement of a grid item between the lines of one axis.
+type ItemLines = Line<GridPlacement<SmolStr>>;
+
+/// How many implicit rows the grid makes before and after its explicit
+/// grid of `rows` rows for items with the row and column `placements`, when
+/// an automatic repetition leaves the count of its rows or columns unknown
+/// and automatic placement cannot be followed cell by cell.
+///
+/// Rows that repeat to fill the grid leave no line to count from, and are
+/// taken to hold every item. Columns that do are taken to hold every item
+/// in the explicit rows, so only an item on a numbered row line past them,
+/// or, without any, each item a row flow places automatically, brings in
+/// an implicit row; in either flow an item that spans more rows than the
+/// explicit grid has adds the rest.
+fn estimated_implicit_rows(
+    placements: &[(ItemLines, ItemLines)],
+    rows: usize,
+    row_flow: bool,
+) -> (usize, usize) {
+    let Ok(count) = i32::try_from(rows) else {
+        return (0, 0);
+    };
+    let mut after = 0_usize;
+    let mut before = 0_usize;
+    let mut automatic = 0_usize;
+    for (placement, _) in placements {
+        match definite_lines(placement, count) {
+            Some((start, end)) => {
+                after = after.max(usize::try_from(end - count).unwrap_or_default());
+                before = before.max(usize::try_from(-start).unwrap_or_default());
+            }
+            None => {
+                automatic += 1;
+                after = after.max(span_of(placement).saturating_sub(rows));
+            }
+        }
     }
+    if row_flow && rows == 0 {
+        after = after.max(automatic);
+    }
+    (before, after)
+}
+
+/// Where a grid item sits along one axis of its grid: between the lines a
+/// numbered line places it, numbered from zero at the start of the explicit
+/// grid, or anywhere automatic placement puts it; and how many tracks it
+/// spans.
+#[derive(Clone, Copy)]
+struct AxisPlacement {
+    lines: Option<(i32, i32)>,
+    span: i32,
+}
+
+impl AxisPlacement {
+    fn of(placement: &Line<GridPlacement<SmolStr>>, count: i32) -> Self {
+        let lines = definite_lines(placement, count);
+        let span = lines.map_or_else(
+            || i32::try_from(span_of(placement)).unwrap_or(1),
+            |(start, end)| end - start,
+        );
+        Self { lines, span }
+    }
+}
+
+/// The lines, along the axis the auto-placement cursor moves across and the
+/// one it moves along, between which the grid places `items` (CSS Grid 1
+/// §8.5): the explicit grid of `counts` tracks, and the implicit tracks the
+/// items bring in on either side. Each item gives its placement in the same
+/// order of axes, as `dense` or sparse packing fills the grid.
+fn placed_extents(items: &[[AxisPlacement; 2]], counts: [i32; 2], dense: bool) -> [(i32, i32); 2] {
+    type Area = [(i32, i32); 2];
+    let overlaps = |placed: &[Area], area: Area| {
+        placed.iter().any(|other| {
+            (0..2).all(|axis| area[axis].0 < other[axis].1 && other[axis].0 < area[axis].1)
+        })
+    };
+    let mut placed = Vec::<Area>::with_capacity(items.len());
+    // Items placed on numbered lines along both axes.
+    for item in items {
+        if let [
+            AxisPlacement {
+                lines: Some(major), ..
+            },
+            AxisPlacement {
+                lines: Some(minor), ..
+            },
+        ] = item
+        {
+            placed.push([*major, *minor]);
+        }
+    }
+    // Items locked to a track the cursor moves across take the first cells
+    // in it that are free, past those placed in it before when sparse.
+    let mut track_cursors = Vec::<(i32, i32)>::new();
+    for item in items {
+        let [
+            AxisPlacement {
+                lines: Some(major), ..
+            },
+            AxisPlacement { lines: None, span },
+        ] = item
+        else {
+            continue;
+        };
+        let cursor = track_cursors
+            .iter()
+            .find(|(track, _)| *track == major.0)
+            .map(|&(_, at)| at);
+        let mut minor = if dense { 0 } else { cursor.unwrap_or(0) };
+        while overlaps(&placed, [*major, (minor, minor + span)]) {
+            minor += 1;
+        }
+        placed.push([*major, (minor, minor + span)]);
+        track_cursors.retain(|(track, _)| *track != major.0);
+        track_cursors.push((major.0, minor + span));
+    }
+    // The tracks the cursor moves along hold the explicit ones, every item
+    // placed on a line along them, and the widest span of the others.
+    let mut minor_start = 0;
+    let mut minor_end = counts[1];
+    let mut widest = 0;
+    for item in items {
+        match item[1].lines {
+            Some((start, end)) => {
+                minor_start = minor_start.min(start);
+                minor_end = minor_end.max(end);
+            }
+            None => widest = widest.max(item[1].span),
+        }
+    }
+    for area in &placed {
+        minor_start = minor_start.min(area[1].0);
+        minor_end = minor_end.max(area[1].1);
+    }
+    minor_end = minor_end.max(minor_start + widest);
+    let major_start = placed.iter().map(|area| area[0].0).fold(0, i32::min);
+    // The remaining items follow the cursor.
+    let mut cursor = (major_start, minor_start);
+    for item in items {
+        let [
+            AxisPlacement {
+                lines: None,
+                span: major_span,
+            },
+            minor,
+        ] = item
+        else {
+            continue;
+        };
+        let area = match minor.lines {
+            Some(lines) => {
+                let mut major = if dense {
+                    major_start
+                } else {
+                    cursor.0 + i32::from(lines.0 < cursor.1)
+                };
+                while overlaps(&placed, [(major, major + major_span), lines]) {
+                    major += 1;
+                }
+                cursor = (major, lines.0);
+                [(major, major + major_span), lines]
+            }
+            None => {
+                if dense {
+                    cursor = (major_start, minor_start);
+                }
+                loop {
+                    let area = [
+                        (cursor.0, cursor.0 + major_span),
+                        (cursor.1, cursor.1 + minor.span),
+                    ];
+                    if area[1].1 > minor_end {
+                        cursor = (cursor.0 + 1, minor_start);
+                    } else if overlaps(&placed, area) {
+                        cursor.1 += 1;
+                    } else {
+                        break area;
+                    }
+                }
+            }
+        };
+        placed.push(area);
+    }
+    let major = placed.iter().fold((0, counts[0]), |(start, end), area| {
+        (start.min(area[0].0), end.max(area[0].1))
+    });
+    [major, (minor_start, minor_end)]
 }
 
 /// The tracks a repetition gives. An automatic one repeats to fill the grid,
