@@ -9248,3 +9248,252 @@ fn the_last_step_of_the_growth_takes_what_a_positioned_box_needs() {
     // The last step holds every box, not only the one that needs least.
     assert_eq!(out_of_flow_step(last, Some(80.0), 40.0, 35.0), 80.0);
 }
+
+/// A container of `container_css` holding a wrapper of `wrapper_css` around a
+/// paragraph of `lines` lines, and after it a paragraph of `after` lines, in
+/// 10px Ahem lines, with `orphans` and `widows` at 1. Returns the document,
+/// the wrapper, the paragraph in it and the paragraph after it.
+fn sized_wrapper_columns(
+    container_css: &str,
+    wrapper_css: &str,
+    paragraph_css: &str,
+    lines: usize,
+    after: usize,
+) -> (Document, usize, usize, usize) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Some("margin:0;font:10px/10px Ahem;orphans:1;widows:1"),
+    );
+    let container = doc.append_element(Some(body), "div", Some(container_css));
+    let wrapper = doc.append_element(Some(container), "div", Some(wrapper_css));
+    let paragraph = doc.append_element(Some(wrapper), "div", Some(paragraph_css));
+    let next = doc.append_element(Some(container), "div", Some("display:block"));
+    for (parent, count) in [(paragraph, lines), (next, after)] {
+        for line in 0..count {
+            doc.append_text(parent, "x");
+            if line + 1 < count {
+                doc.append_element(Some(parent), "br", None::<&str>);
+            }
+        }
+    }
+    lay_out_in_ahem(&mut doc, 800.0, 600.0);
+    (doc, wrapper, paragraph, next)
+}
+
+const TWO_FILLED_COLUMNS: &str =
+    "display:block;width:200px;height:100px;columns:2;column-gap:0;column-fill:auto";
+
+/// The column of each piece of the paragraph `paragraph`, with whether the
+/// piece sits in the piece of `wrapper` in that same column.
+fn paragraph_piece_homes(doc: &Document, paragraph: usize, wrapper: usize) -> Vec<(usize, bool)> {
+    let fragments = &doc.fragment_tree.fragments;
+    fragments
+        .iter()
+        .filter(|fragment| fragment.node_id == paragraph)
+        .map(|fragment| {
+            let home = fragment.parent.map(|parent| &fragments[parent]);
+            (
+                fragment.fragmentainer,
+                home.is_some_and(|home| {
+                    home.node_id == wrapper && home.fragmentainer == fragment.fragmentainer
+                }),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_wrapper_with_a_height_breaks_between_columns_of_their_width() {
+    // Chromium: the 150px wrapper fills the first 100px column and takes
+    // 50px of the second; its 12 lines break after the tenth. Both pieces
+    // are a column wide, not the width of the container.
+    let (doc, wrapper, paragraph, _) = sized_wrapper_columns(
+        TWO_FILLED_COLUMNS,
+        "display:block;height:150px;background:red",
+        "display:block",
+        12,
+        0,
+    );
+    assert_eq!(
+        fragment_rects(&doc, wrapper),
+        [(0, 0.0, 0.0, 100.0), (1, 100.0, 0.0, 50.0)]
+    );
+    assert_eq!(
+        paragraph_pieces(&doc, paragraph).0,
+        [(0, 10, 0), (10, 12, 1)]
+    );
+    // The lines in the second column sit in the wrapper's piece there, which
+    // paints its background before them.
+    assert_eq!(
+        paragraph_piece_homes(&doc, paragraph, wrapper),
+        [(0, true), (1, true)]
+    );
+}
+
+#[test]
+fn the_room_below_the_boxes_of_a_wrapper_with_a_height_is_cut_at_column_ends() {
+    // Chromium: three lines stay in the first column, and the rest of the
+    // 150px goes on into the second; none of the lines moves with it, as
+    // they would with padding there.
+    for wrapper_css in ["height:150px", "min-height:150px"] {
+        let (doc, wrapper, paragraph, _) = sized_wrapper_columns(
+            TWO_FILLED_COLUMNS,
+            &format!("display:block;{wrapper_css};background:red"),
+            "display:block",
+            3,
+            0,
+        );
+        assert_eq!(
+            fragment_rects(&doc, wrapper),
+            [(0, 0.0, 0.0, 100.0), (1, 100.0, 0.0, 50.0)],
+            "{wrapper_css}"
+        );
+        assert_eq!(
+            paragraph_pieces(&doc, paragraph).0,
+            [(0, 3, 0)],
+            "{wrapper_css}"
+        );
+    }
+}
+
+#[test]
+fn a_line_pushed_past_a_column_end_takes_room_from_the_wrapper_height() {
+    // Chromium: in 95px columns the tenth line goes to the second column,
+    // and the 5px it leaves is part of the 150px: the wrapper takes 95px and
+    // then 55px, not 60px.
+    let (doc, wrapper, paragraph, _) = sized_wrapper_columns(
+        "display:block;width:200px;height:95px;columns:2;column-gap:0;column-fill:auto",
+        "display:block;height:150px;background:red",
+        "display:block",
+        12,
+        0,
+    );
+    assert_eq!(
+        fragment_rects(&doc, wrapper),
+        [(0, 0.0, 0.0, 95.0), (1, 100.0, 0.0, 55.0)]
+    );
+    assert_eq!(paragraph_pieces(&doc, paragraph).0, [(0, 9, 0), (9, 12, 1)]);
+}
+
+#[test]
+fn balanced_columns_share_the_height_of_a_wrapper_between_its_lines() {
+    // Chromium: the columns balance at 75px, half the wrapper, and the eighth
+    // line, which the column end would cut, starts the second column.
+    let (doc, wrapper, paragraph, _) = sized_wrapper_columns(
+        "display:block;width:200px;height:100px;columns:2;column-gap:0",
+        "display:block;height:150px;background:red",
+        "display:block",
+        12,
+        0,
+    );
+    assert_eq!(
+        fragment_rects(&doc, wrapper),
+        [(0, 0.0, 0.0, 75.0), (1, 100.0, 0.0, 75.0)]
+    );
+    assert_eq!(paragraph_pieces(&doc, paragraph).0, [(0, 7, 0), (7, 12, 1)]);
+}
+
+#[test]
+fn a_paragraph_after_a_wrapper_with_a_height_starts_where_the_height_ends() {
+    // Chromium: the 60px wrapper stays in the first column, and the next
+    // paragraph follows it there, 4 lines before the column ends.
+    let (doc, wrapper, paragraph, next) = sized_wrapper_columns(
+        TWO_FILLED_COLUMNS,
+        "display:block;height:60px;background:red",
+        "display:block",
+        3,
+        12,
+    );
+    assert_eq!(fragment_rects(&doc, wrapper), [(0, 0.0, 0.0, 60.0)]);
+    assert_eq!(paragraph_pieces(&doc, paragraph).0, [(0, 3, 0)]);
+    assert_eq!(paragraph_pieces(&doc, next).0, [(0, 4, 0), (4, 12, 1)]);
+}
+
+#[test]
+fn the_height_of_a_wrapper_counts_from_the_margin_its_first_box_collapses_through() {
+    // Chromium: the 20px top margin of the paragraph collapses through the
+    // wrapper's, which has no padding or border above it, so the wrapper
+    // starts 20px down and its 150px end 70px down the second column.
+    let (doc, wrapper, paragraph, _) = sized_wrapper_columns(
+        TWO_FILLED_COLUMNS,
+        "display:block;height:150px;background:red",
+        "display:block;margin-top:20px",
+        3,
+        0,
+    );
+    assert_eq!(
+        fragment_rects(&doc, wrapper),
+        [(0, 0.0, 20.0, 80.0), (1, 100.0, 0.0, 70.0)]
+    );
+    assert_eq!(paragraph_pieces(&doc, paragraph).0, [(0, 3, 0)]);
+}
+
+#[test]
+fn lines_in_a_later_column_of_a_painted_wrapper_sit_in_its_piece_there() {
+    // A wrapper whose padding below goes on into the second column paints a
+    // piece there; the two lines the column holds sit in that piece, so they
+    // are painted over its background, not under it (Chromium shows them).
+    let (doc, wrapper, paragraph, _) = sized_wrapper_columns(
+        TWO_FILLED_COLUMNS,
+        "display:block;padding-bottom:30px;background:red",
+        "display:block",
+        12,
+        0,
+    );
+    assert_eq!(
+        paragraph_pieces(&doc, paragraph).0,
+        [(0, 10, 0), (10, 12, 1)]
+    );
+    assert_eq!(
+        paragraph_piece_homes(&doc, paragraph, wrapper),
+        [(0, true), (1, true)]
+    );
+}
+
+#[test]
+fn a_wrapper_inside_a_painted_one_has_a_piece_in_each_column_of_the_outer() {
+    // The inner wrapper paints nothing, but its lines in the second column
+    // sit in its piece there, which sits in the outer wrapper's piece there,
+    // so the outer background is painted before them (Chromium shows them).
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Some("margin:0;font:10px/10px Ahem;orphans:1;widows:1"),
+    );
+    let container = doc.append_element(Some(body), "div", Some(TWO_FILLED_COLUMNS));
+    let outer = doc.append_element(
+        Some(container),
+        "div",
+        Some("display:block;height:150px;background:red"),
+    );
+    let inner = doc.append_element(Some(outer), "div", Some("display:block"));
+    let paragraph = doc.append_element(Some(inner), "div", Some("display:block"));
+    for line in 0..12 {
+        doc.append_text(paragraph, "x");
+        if line < 11 {
+            doc.append_element(Some(paragraph), "br", None::<&str>);
+        }
+    }
+    lay_out_in_ahem(&mut doc, 800.0, 600.0);
+    assert_eq!(
+        fragment_rects(&doc, outer),
+        [(0, 0.0, 0.0, 100.0), (1, 100.0, 0.0, 50.0)]
+    );
+    assert_eq!(
+        paragraph_pieces(&doc, paragraph).0,
+        [(0, 10, 0), (10, 12, 1)]
+    );
+    assert_eq!(
+        paragraph_piece_homes(&doc, paragraph, inner),
+        [(0, true), (1, true)]
+    );
+    assert_eq!(
+        paragraph_piece_homes(&doc, inner, outer),
+        [(0, true), (1, true)]
+    );
+}
