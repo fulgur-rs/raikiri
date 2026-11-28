@@ -3011,8 +3011,10 @@ pub(super) fn paginate(
         let Some(next) = chunk.next else {
             break;
         };
+        // A continuation advances a line, a paragraph or the offset into a
+        // sized box, so it never stands where the page began.
         if next == resume {
-            return Ok(None); // cov:ignore: fill_chunk returns a continuation only after advancing a line, a paragraph or the offset into a sized box.
+            return Ok(None); // cov:ignore: fill_chunk returns a continuation only after advancing a line or a paragraph.
         }
         resume = next;
         absolute_y = page_origin + page_height;
