@@ -3,7 +3,9 @@
 //! crosses the page end starts the next page, the `orphans` and `widows` of
 //! the paragraph count its lines, blank ones left by `<br>` included, and a
 //! paragraph that moves whole takes its box along. A paragraph of `<br>`
-//! line breaks alone breaks between its blank lines the same way. Where each
+//! line breaks alone breaks between its blank lines the same way, and so do
+//! lines of inline-blocks that come before the first text of a paragraph,
+//! which stay behind or move with that text. Where each
 //! glyph and box falls is what Chromium prints for the same documents on
 //! pages 100px square, with Ahem glyphs of 20px on lines of 30px.
 
@@ -472,4 +474,113 @@ fn blank_lines_that_overflow_a_box_ending_on_the_page_stay() {
     let body = blank_lines(20, "height:40px", 4);
     assert_eq!(extents(&body, "p"), [(0, 20.0, 60.0)]);
     assert_eq!(extents(&body, "z"), [(0, 60.0, 70.0)]);
+}
+
+#[test]
+fn lines_of_inline_blocks_before_the_first_text_stay_when_the_widows_move() {
+    // The third line, the first with text, crosses the page end; it and the
+    // last line move on, and the inline-blocks before them stay as orphans.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:20px"></div><div><i>A</i><br><i>B</i><br>C<br>D</div><div>Z</div>"#
+        ),
+        [
+            (0, 'A', 0, 25),
+            (0, 'B', 0, 55),
+            (1, 'C', 0, 5),
+            (1, 'D', 0, 35),
+            (1, 'Z', 0, 65),
+        ]
+    );
+}
+
+#[test]
+fn an_inline_block_before_the_first_text_moves_with_its_line() {
+    // The inline-block that starts the line of the first text goes to the
+    // next page with that line.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:20px"></div><div><i>A</i><br><i>B</i><br><i>E</i>C<br>D</div><div>Z</div>"#
+        ),
+        [
+            (0, 'A', 0, 25),
+            (0, 'B', 0, 55),
+            (1, 'C', 40, 5),
+            (1, 'D', 0, 35),
+            (1, 'E', 0, 5),
+            (1, 'Z', 0, 65),
+        ]
+    );
+}
+
+#[test]
+fn lines_of_inline_blocks_before_the_first_text_of_a_cell_stay() {
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:20px"></div><table style="border-spacing:0"><tr><td style="padding:0;vertical-align:top"><i>A</i><br><i>B</i><br>C<br>D</td></tr></table><div>Z</div>"#
+        ),
+        [
+            (0, 'A', 0, 25),
+            (0, 'B', 0, 55),
+            (1, 'C', 0, 5),
+            (1, 'D', 0, 35),
+            (1, 'Z', 0, 65),
+        ]
+    );
+}
+
+#[test]
+fn lines_of_inline_blocks_before_the_first_text_stay_above_a_block_child() {
+    // The block child after the lines follows the moved lines down.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:20px"></div><div><i>A</i><br><i>B</i><br>C<br>D<div>K</div></div><div>Z</div>"#
+        ),
+        [
+            (0, 'A', 0, 25),
+            (0, 'B', 0, 55),
+            (1, 'C', 0, 5),
+            (1, 'D', 0, 35),
+            (1, 'K', 0, 65),
+            (2, 'Z', 0, 5),
+        ]
+    );
+}
+
+#[test]
+fn a_paragraph_whose_inline_blocks_cross_the_page_before_its_text_moves_whole() {
+    // The first line, of an inline-block alone, crosses the end of the page
+    // the text does not start on: the paragraph moves whole, and the widows
+    // take the text on to the page after.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:80px"></div><div><i>A</i><br><i>B</i><br>C<br>D</div><div>Z</div>"#
+        ),
+        [
+            (1, 'A', 0, 5),
+            (1, 'B', 0, 35),
+            (2, 'C', 0, 5),
+            (2, 'D', 0, 35),
+            (2, 'Z', 0, 65),
+        ]
+    );
+}
+
+#[test]
+fn a_paragraph_whose_inline_blocks_leave_one_orphan_before_its_text_moves_whole() {
+    // The first line fits the page but alone leaves too few orphans; the
+    // text lines that cross the next page end then break again there.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:70px"></div><div><i>A</i><br><i>B</i><br><i>E</i><br>C<br>D</div><div>Z</div>"#
+        ),
+        [
+            (1, 'A', 0, 5),
+            (1, 'B', 0, 35),
+            (1, 'E', 0, 65),
+            (2, 'C', 0, 5),
+            (2, 'D', 0, 35),
+            (2, 'Z', 0, 65),
+        ]
+    );
 }
