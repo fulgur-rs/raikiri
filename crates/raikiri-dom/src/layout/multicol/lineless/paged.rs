@@ -27,6 +27,10 @@ pub(in crate::layout::multicol) struct PagedPiece {
     /// of its piece, whose rect `rect` and `clip` are relative to; `None` for
     /// a piece placed in the container.
     pub(in crate::layout::multicol) parent: Option<(usize, usize)>,
+    /// Whether the piece is that of a box of a sliced flex container, which
+    /// has no records of its own until the pages place it in the container's
+    /// pieces.
+    pub(in crate::layout::multicol) item: bool,
 }
 
 /// The pieces and the page groups of a container, and where its columns end
@@ -282,8 +286,11 @@ pub(in crate::layout::multicol) fn paginate(
             .collect();
         // A flex container shows its items in each piece, as in the layout
         // of the container, so its pieces are the whole box moved up.
-        let flex = own.len() > 1 && refills_on_pages(tree, child, size.height);
-        let sliced = flex || own.len() > 1 && slices_decorations(tree, child);
+        // The boxes of a sliced flex container that the pages fill again get
+        // their records afresh each time the pages place it, in one piece or
+        // more.
+        let flex = refills_on_pages(tree, child, size.height);
+        let sliced = own.len() > 1 && (flex || slices_decorations(tree, child));
         let offset = super::inline_offset(tree, child, context, size.width);
         // The pieces of a wrapper that slices its decorations show what its
         // boxes take of each column, with the margins a break cuts.
@@ -338,6 +345,7 @@ pub(in crate::layout::multicol) fn paginate(
                 index,
                 count: own.len(),
                 parent: None,
+                item: false,
             });
             taken += consumed[index];
         }
@@ -576,6 +584,7 @@ fn push_inside(
             index,
             count: own.len(),
             parent: Some((parent.node, parent_index)),
+            item: false,
         });
         taken += piece.height;
     }
@@ -621,7 +630,8 @@ fn push_flex_items(
                 starts
                     .iter()
                     .rposition(|&(start, _)| top >= start)
-                    .unwrap_or(0),
+                    .unwrap_or(0)
+                    .min(kept.saturating_sub(1)),
             );
         }
         // The pieces past the pages kept are not placed, nor what they show.
@@ -645,6 +655,7 @@ fn push_flex_items(
                 index: position,
                 count,
                 parent: Some((container, index)),
+                item: true,
             });
         }
     }
