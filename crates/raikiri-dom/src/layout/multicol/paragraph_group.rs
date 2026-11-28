@@ -877,7 +877,7 @@ pub(super) fn balance(
         BlockEdges::Refused,
         SizedBoxes::All,
         None,
-        false,
+        true,
     )?;
     // A chain of wrappers around one paragraph keeps the strategies of such
     // chains, unless the wrappers hold room that those cannot place, a sized
@@ -914,7 +914,18 @@ fn balanced(
     context: FragmentationContext,
     ceiling: f32,
 ) -> Option<(Group, f32)> {
-    let divided = divided_height(paragraphs, context, FlowCursor::default(), ceiling)?;
+    // A forced break between the paragraphs leaves no height that divides
+    // them evenly, so the search below finds the least height that holds
+    // them, starting from none.
+    let divided = if paragraphs
+        .iter()
+        .flatten()
+        .any(|paragraph| paragraph.break_before)
+    {
+        0.0
+    } else {
+        divided_height(paragraphs, context, FlowCursor::default(), ceiling)?
+    };
     // A monolithic box that a column could overflow sets the least height
     // the columns balance to: the columns are at least as tall as it, as
     // Chromium balances them, so no trial holds it by overflowing.
@@ -994,8 +1005,8 @@ fn balanced(
 /// that avoid breaks inside them: balanced columns are at least that tall,
 /// where they may be, so that no column end cuts such a paragraph
 /// (Chromium). A paragraph that an earlier break cut sets none. The first
-/// paragraph of the flow takes the margins above it too, which no break
-/// before it cuts.
+/// paragraph of the flow, and one after a forced break, take the margins
+/// above them too, which no break before them cuts.
 fn avoided_height(
     paragraphs: &[Option<Paragraph>],
     resume: FlowCursor,
@@ -1007,6 +1018,11 @@ fn avoided_height(
     let mut tallest = 0.0f32;
     for paragraph in paragraphs.iter().take(to).skip(from).flatten() {
         let lines = paragraph.extents.first().zip(paragraph.extents.last());
+        // A forced break starts a column at the paragraph, which keeps the
+        // margins above it there, as at the start of the flow.
+        if paragraph.break_before {
+            leading = Some(Margins::default());
+        }
         let above = match leading {
             Some(margins) => {
                 let margins = margins.with(paragraph.margin_top);
@@ -1099,8 +1115,9 @@ fn divided_height(
 }
 
 /// Place paragraphs in columns of the definite height `height` in source
-/// order, continuing in overflow columns past the last one (CSS Multi-column
-/// 1, 8.2).
+/// order, starting a column at each forced column break between them and
+/// continuing in overflow columns past the last one (CSS Multi-column 1,
+/// 8.2).
 pub(super) fn fill_definite(
     tree: &LayoutSession<'_>,
     entries: &[Measurement],
@@ -1121,7 +1138,7 @@ pub(super) fn fill_definite(
         BlockEdges::Sliced,
         SizedBoxes::All,
         Some(height),
-        false,
+        true,
     )?;
     let flow = flow.has_wrappers().then_some(flow);
     // A chain of wrappers around one paragraph keeps the strategies of such
@@ -1303,8 +1320,8 @@ enum SizedBoxes {
 /// lines, and the start and end of a wrapper may have padding: both are room
 /// besides the paragraphs, which [`Collected::room`] notes.
 /// With `forced`, the flow may have forced column breaks between its boxes,
-/// which [`Paragraph::break_before`] notes; only the page stream, whose fill
-/// starts a column at each, passes that.
+/// which [`Paragraph::break_before`] notes; the fill of the streams that pass
+/// that starts a column at each.
 fn collect(
     tree: &LayoutSession<'_>,
     flow: &Flow,
