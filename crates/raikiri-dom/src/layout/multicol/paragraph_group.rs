@@ -522,7 +522,12 @@ fn flow_wrapper(tree: &LayoutSession<'_>, id: usize, breaks: bool) -> bool {
     !margin.top.is_auto()
         && !margin.bottom.is_auto()
         && node.multicol_auto_width
-        && style.min_size().width.is_auto()
+        // A zero minimum width, as `auto` is for a block, leaves the wrapper
+        // as wide as its column.
+        && {
+            let minimum: Dimension = style.min_size().width.into();
+            minimum.is_auto() || style_dimension_length(minimum) == Some(0.0)
+        }
         && style.max_size().width.is_auto()
         && style.size().height.is_auto()
         && style.min_size().height.is_auto()

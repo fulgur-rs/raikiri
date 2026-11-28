@@ -532,8 +532,9 @@ fn is_plain_box_but_clearance(
         || node.tag_name().is_some_and(|tag| {
             ATOMIC_TAGS.contains(&tag)
                 || REPLACED_BOX_TAGS.contains(&tag)
-                || matches!(tag, "fieldset" | "legend" | "details" | "summary")
+                || matches!(tag, "legend" | "details" | "summary")
         })
+        || holds_legend(tree, child)
         || [node.break_before, node.break_after]
             .into_iter()
             .any(|value| sets_break_in_columns(value) && !(breaks && value == BreakBetween::Column))
@@ -541,6 +542,26 @@ fn is_plain_box_but_clearance(
         || node.multicol.is_some()
         || node.ifc.is_some() && !allow_lines
         || is_right_aligned_in_parent(tree, child))
+}
+
+/// Whether `id` is an HTML `fieldset` with a rendered legend: a `legend`
+/// child that is neither floated nor absolutely positioned. The rendered
+/// legend sits over the block-start border of the fieldset, out of the flow
+/// of its content (HTML Living Standard, "Rendering", the fieldset and legend
+/// elements), which the strategies that stack its boxes do not model. A
+/// fieldset with none lays its content out as a `flow-root` box does.
+fn holds_legend(tree: &LayoutSession<'_>, id: usize) -> bool {
+    let node = layout_node(tree, id);
+    node.is_html_fieldset()
+        && node.children.iter().any(|&child| {
+            let legend = layout_node(tree, child);
+            legend.tag_name() == Some("legend")
+                && legend.namespace_uri().is_none()
+                && legend.is_in_document()
+                && !legend.is_display_none()
+                && !legend.layout_position().is_out_of_flow()
+                && !style_of(tree, child).float().is_floated()
+        })
 }
 
 /// The most boxes a flex or grid container may hold and still be sliced whole, so
