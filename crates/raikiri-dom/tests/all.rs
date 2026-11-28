@@ -45,6 +45,7 @@ mod column_flex_replaced_width;
 mod column_flex_stretch_margins;
 mod column_reverse_page_fragments;
 mod column_wrapper_room;
+mod column_wrapper_widths;
 mod constrained_ancestor_paragraph_tests;
 mod contain_intrinsic_size;
 mod contain_layout_baseline;

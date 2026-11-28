@@ -476,8 +476,9 @@ fn starts_formatting_context(node: &crate::node::Node) -> bool {
 }
 
 /// Whether `id` is a wrapper whose boxes join the flow of the columns: a
-/// block that holds only blocks and takes the width of the column. Its
-/// margins adjoin those of its first and last boxes, unless it starts a
+/// block that holds only blocks. Its width, which its boxes are laid out in,
+/// is resolved against the column, whatever sizes it states, so each piece
+/// of it in a column is as wide as the box. Its margins adjoin those of its first and last boxes, unless it starts a
 /// formatting context of its own, as a `flow-root` box does (see
 /// [`starts_formatting_context`]), or padding or border above or below them
 /// keeps them apart: that edge is room in the flow, which a column end cuts,
@@ -521,14 +522,6 @@ fn flow_wrapper(tree: &LayoutSession<'_>, id: usize, breaks: bool) -> bool {
     let margin = style.margin();
     !margin.top.is_auto()
         && !margin.bottom.is_auto()
-        && node.multicol_auto_width
-        // A zero minimum width, as `auto` is for a block, leaves the wrapper
-        // as wide as its column.
-        && {
-            let minimum: Dimension = style.min_size().width.into();
-            minimum.is_auto() || style_dimension_length(minimum) == Some(0.0)
-        }
-        && style.max_size().width.is_auto()
         && style.size().height.is_auto()
         && style.min_size().height.is_auto()
         && style.max_size().height.is_auto()
