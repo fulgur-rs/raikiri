@@ -79,6 +79,7 @@ pub mod paint_rules;
 mod table_glyphs;
 #[doc(hidden)]
 pub mod text_decoration;
+pub use layout::TableGlyphRecorder;
 pub use table_glyphs::MeasuredTableCell;
 pub use text_decoration::{DecorationKind, DecorationLine, DecorationStyle};
 

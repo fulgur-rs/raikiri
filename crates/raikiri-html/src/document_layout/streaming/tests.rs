@@ -2301,6 +2301,19 @@ fn starting_with_write_preserves_regular_layout_for_write_and_feed() {
 }
 
 #[test]
+fn a_sink_with_a_glyph_budget_can_decline_the_sample_after_measurement() {
+    let html = sample_table_html();
+    let mut sink = Record {
+        glyph_budget: 32 * 1024 * 1024,
+        ..Default::default()
+    };
+    completed(stream(&html, 8192, &mut sink, Default::default()).unwrap());
+    assert_eq!(sink.sample_rows, 0);
+    assert!(sink.offered_table_pages > 0);
+    assert_eq!(sink.pages, batch_pages(&html));
+}
+
+#[test]
 fn mixed_write_and_feed_deliver_measured_cells_within_the_sink_budget() {
     let html = sample_table_html();
     let fonts = crate::FontCollectionBuilder::new()
@@ -2316,6 +2329,7 @@ fn mixed_write_and_feed_deliver_measured_cells_within_the_sink_budget() {
     for glyph_budget in [0, 1, 32 * 1024 * 1024] {
         let mut sink = Record {
             inspect_sample: true,
+            complete_sample_count: Some(1),
             glyph_budget,
             ..Default::default()
         };
@@ -2326,12 +2340,15 @@ fn mixed_write_and_feed_deliver_measured_cells_within_the_sink_budget() {
             &mut sink,
         );
         let (prefix, rest) = html.as_bytes().split_at(CHECKPOINT_BYTES - 1);
+        assert_eq!(stream.write(&[]).unwrap(), 0);
         stream.feed(prefix).unwrap();
         stream.write_all(&rest[..1]).unwrap();
-        stream.feed(&rest[1..]).unwrap();
+        assert!(stream.table_input.is_some());
+        stream.write_all(&rest[1..2]).unwrap();
+        stream.feed(&rest[2..]).unwrap();
         completed(stream.finish().unwrap());
-        assert_eq!(sink.sample_rows, 256);
-        assert_eq!(sink.measured_cells, if glyph_budget > 1 { 256 } else { 0 });
+        assert_eq!(sink.sample_rows, 600);
+        assert_eq!(sink.measured_cells, if glyph_budget > 1 { 600 } else { 0 });
     }
 }
 

@@ -1,7 +1,5 @@
 //! Reuse of short, single-run text shaped during table column measurement.
 
-pub(crate) mod store;
-
 use crate::{FontId, Glyph, PositionedGlyphRun};
 
 // The header holds the blob id, face index, four metrics and byte length.
@@ -10,6 +8,8 @@ const HEADER: usize = 29;
 const MAX_TEXT: usize = 20;
 const GLYPH_BYTES: usize = 8;
 const MAX_RECORD: usize = HEADER + MAX_TEXT * (1 + GLYPH_BYTES);
+// At this magnitude, f32 stops distinguishing every Shodo 1/64 px layout unit.
+const EXACT_POSITION_LIMIT: f32 = (1 << 18) as f32;
 
 fn eligible_text(text: &str) -> bool {
     (1..=MAX_TEXT).contains(&text.len())
@@ -22,12 +22,12 @@ fn record_len(text: &str) -> usize {
 }
 
 pub(crate) fn capture(
-    store: &store::Store,
+    store: &dyn crate::TableGlyphRecorder,
     id: usize,
     text: &str,
     p: &shodo::Paragraph,
     options: &shodo::style::LineOptions,
-    cx: &mut shodo::LayoutContext,
+    cx: &mut Option<shodo::LayoutContext>,
 ) {
     // Justification can change advances when the cell gets its final width.
     if !eligible_text(text)
@@ -40,7 +40,7 @@ pub(crate) fn capture(
     }
     // Intrinsic sizing returns widths. Shodo exposes glyphs on a materialized line.
     let result = p.next_line(
-        cx,
+        cx.get_or_insert_default(),
         p.start_token(),
         options,
         &shodo::LineConstraint::new(100_000.0),
@@ -49,7 +49,12 @@ pub(crate) fn capture(
     capture_line(store, id, text, result);
 }
 
-fn capture_line(store: &store::Store, id: usize, text: &str, result: shodo::LineResult) {
+fn capture_line(
+    store: &dyn crate::TableGlyphRecorder,
+    id: usize,
+    text: &str,
+    result: shodo::LineResult,
+) {
     let shodo::LineResult::Line(line) = result else {
         return;
     };
@@ -63,7 +68,9 @@ fn capture_line(store: &store::Store, id: usize, text: &str, result: shodo::Line
     let Some(shodo::Fragment::GlyphRun(run)) = fragments.next() else {
         return;
     };
+    let origin = run.inline_start();
     if fragments.next().is_some()
+        || origin.abs() >= EXACT_POSITION_LIMIT
         || run.text_range() != (0..text.len())
         || run.is_ellipsis()
         || run.bidi_level() != 0
@@ -98,7 +105,8 @@ fn capture_line(store: &store::Store, id: usize, text: &str, result: shodo::Line
     {
         let Some(glyph) = glyphs.next() else { return };
         if glyph.cluster as usize != cluster
-            || glyph.inline_position != pen
+            || glyph.inline_position.abs() >= EXACT_POSITION_LIMIT
+            || f64::from(glyph.inline_position) - f64::from(origin) != f64::from(pen)
             || glyph.block_offset != 0.
         {
             return;
@@ -110,18 +118,6 @@ fn capture_line(store: &store::Store, id: usize, text: &str, result: shodo::Line
     if glyphs.next().is_none() && pen == run.inline_size() {
         store.write(id, &bytes[..record_len(text)]);
     }
-}
-
-pub(crate) fn read(store: &store::Store, id: usize, text: &str) -> Option<MeasuredTableCell> {
-    if !eligible_text(text) {
-        return None;
-    }
-    let mut bytes = [0; MAX_RECORD];
-    let record = &mut bytes[..record_len(text)];
-    if !store.read(id, record) {
-        return None;
-    }
-    decode(record, text)
 }
 
 fn decode(record: &[u8], text: &str) -> Option<MeasuredTableCell> {
@@ -179,6 +175,23 @@ pub struct MeasuredTableCell {
 }
 
 impl MeasuredTableCell {
+    /// Maximum size of an encoded record, in bytes.
+    pub const MAX_RECORD_BYTES: usize = MAX_RECORD;
+
+    /// Decode a record for the given cell text. For eligible text, the callback
+    /// receives the exact record-sized buffer and returns whether it filled it.
+    pub fn from_record(text: &str, read: impl FnOnce(&mut [u8]) -> bool) -> Option<Self> {
+        if !eligible_text(text) {
+            return None;
+        }
+        let mut bytes = [0; MAX_RECORD];
+        let record = &mut bytes[..record_len(text)];
+        if !read(record) {
+            return None;
+        }
+        decode(record, text)
+    }
+
     /// Replace a sample's text and glyphs when the face, metrics, cell text and
     /// available width match. The caller supplies the sample for the corresponding
     /// column, verifies the cell geometry, and assigns the target origin, line and

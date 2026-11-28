@@ -830,7 +830,7 @@ fn write_roots(doc: &mut Document, cascade: &CascadeResult, built: Vec<(usize, I
     if let Some(crate::layout::table::WindowColumns::Measure(measurements)) = &doc.window_columns
         && let Some(store) = measurements.glyph_store.as_deref()
     {
-        let mut cx = shodo::LayoutContext::new();
+        let mut cx = None;
         for (idx, root) in &built {
             let node = &doc.nodes[*idx];
             if node.tag_name() == Some("td")

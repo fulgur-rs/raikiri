@@ -1,11 +1,33 @@
 use super::*;
 
-fn test_store() -> store::Store {
-    store::Store::new(
-        tempfile::tempfile().unwrap(),
-        tempfile::tempfile().unwrap(),
-        4096,
-    )
+use crate::TableGlyphRecorder;
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+#[derive(Debug, Default)]
+struct TestStore(Mutex<HashMap<usize, Vec<u8>>>);
+
+impl TableGlyphRecorder for TestStore {
+    fn can_write(&self, id: usize, _len: usize) -> bool {
+        !self.0.lock().unwrap().contains_key(&id)
+    }
+
+    fn write(&self, id: usize, bytes: &[u8]) {
+        self.0.lock().unwrap().insert(id, bytes.to_vec());
+    }
+}
+
+impl TestStore {
+    fn read(&self, id: usize, text: &str) -> Option<MeasuredTableCell> {
+        MeasuredTableCell::from_record(text, |buffer| {
+            let entries = self.0.lock().unwrap();
+            let Some(bytes) = entries.get(&id).filter(|entry| entry.len() == buffer.len()) else {
+                return false;
+            };
+            buffer.copy_from_slice(bytes);
+            true
+        })
+    }
 }
 
 fn test_fonts() -> shodo::font::FontCollection {
@@ -43,7 +65,7 @@ fn measured_glyphs_match_projected_text_and_require_compatible_sample() {
             &[],
         )
         .unwrap();
-    let store = test_store();
+    let store = TestStore::default();
     let paragraph = &document
         .get_node(body)
         .unwrap()
@@ -51,25 +73,20 @@ fn measured_glyphs_match_projected_text_and_require_compatible_sample() {
         .as_ref()
         .unwrap()
         .paragraph;
-    let mut cx = shodo::LayoutContext::new();
+    let mut cx = None;
     let options = shodo::style::LineOptions::default();
     capture(&store, body, " 123 ", paragraph, &options, &mut cx);
-    assert!(read(&store, body, "123").is_none());
+    assert!(store.read(body, "123").is_none());
     let justify = shodo::style::LineOptions {
         text_align_last: shodo::style::TextAlignLast::Justify,
         ..options
     };
     capture(&store, body, "123", paragraph, &justify, &mut cx);
-    assert!(read(&store, body, "123").is_none());
-    let centered = shodo::style::LineOptions {
-        text_align: shodo::style::TextAlign::Center,
-        ..options
-    };
-    capture(&store, body, "123", paragraph, &centered, &mut cx);
-    assert!(read(&store, body, "123").is_none());
+    assert!(store.read(body, "123").is_none());
+    assert!(cx.is_none());
     capture(&store, body, "123", paragraph, &options, &mut cx);
-    assert!(read(&store, body, "124").is_none());
-    let record = read(&store, body, "123").unwrap();
+    assert!(store.read(body, "124").is_none());
+    let record = store.read(body, "123").unwrap();
     let mut sample = document.page_text_runs(&cascade, 0).pop().unwrap();
     let reference = sample.glyphs.clone();
     let width = sample.advance;
@@ -78,6 +95,8 @@ fn measured_glyphs_match_projected_text_and_require_compatible_sample() {
     assert_eq!(shadows.len(), 1);
     let transform = Some(raikiri_traits::PaintTransform::translate(3.0, 7.0));
     sample.transform = transform;
+    let target_origin = (17.125, 43.25);
+    sample.origin = target_origin;
     assert!(!sample.decorations.is_empty());
     assert!(!record.apply(&mut sample, "123", width));
     sample.decorations.clear();
@@ -117,11 +136,12 @@ fn measured_glyphs_match_projected_text_and_require_compatible_sample() {
     assert_eq!(sample.color, color);
     assert_eq!(sample.shadows, shadows);
     assert_eq!(sample.transform, transform);
+    assert_eq!(sample.origin, target_origin);
 }
 
 #[test]
 fn read_only_admits_short_printable_ascii() {
-    let store = test_store();
+    let store = TestStore::default();
     for (id, (text, readable)) in [
         ("", false),
         ("日", false),
@@ -136,9 +156,9 @@ fn read_only_admits_short_printable_ascii() {
         record[28] = text.len() as u8;
         record[HEADER..HEADER + text.len()].copy_from_slice(text.as_bytes());
         store.write(id, &record);
-        assert_eq!(read(&store, id, text).is_some(), readable, "{text:?}");
+        assert_eq!(store.read(id, text).is_some(), readable, "{text:?}");
     }
-    assert!(read(&store, 0, "012345678901234567890").is_none());
+    assert!(store.read(0, "012345678901234567890").is_none());
 }
 
 #[test]
@@ -160,7 +180,7 @@ fn capture_declines_paragraphs_that_need_full_line_projection() {
     use shodo::style::ParagraphStyle;
 
     let fonts = test_fonts();
-    let store = test_store();
+    let store = TestStore::default();
     let mut cx = shodo::LayoutContext::new();
     let style = ParagraphStyle::default();
     let builder = |style: &ParagraphStyle| shodo::ParagraphBuilder::new(style, &Default::default());
@@ -179,7 +199,7 @@ fn capture_declines_paragraphs_that_need_full_line_projection() {
     );
     assert!(matches!(result, shodo::LineResult::Done));
     capture_line(&store, 0, empty.text(), result);
-    assert!(!store.read(0, &mut [0; HEADER]));
+    assert!(store.0.lock().unwrap().is_empty());
 
     let mut rtl = builder(&ParagraphStyle {
         direction: Direction::Rtl,
@@ -217,6 +237,7 @@ fn capture_declines_paragraphs_that_need_full_line_projection() {
         )
         .close_inline();
 
+    let mut capture_cx = None;
     for (name, input) in [
         ("RTL", rtl),
         ("inline box", boxed),
@@ -225,7 +246,84 @@ fn capture_declines_paragraphs_that_need_full_line_projection() {
         let paragraph = input.build(&mut cx, &fonts).unwrap();
         let text = paragraph.text();
         assert!(eligible_text(text), "{name}");
-        capture(&store, 0, text, &paragraph, &Default::default(), &mut cx);
-        assert!(read(&store, 0, text).is_none(), "{name}");
+        capture(
+            &store,
+            0,
+            text,
+            &paragraph,
+            &Default::default(),
+            &mut capture_cx,
+        );
+        assert!(store.read(0, text).is_none(), "{name}");
     }
+}
+
+#[test]
+fn capture_stores_glyph_positions_relative_to_the_run() {
+    use shodo::node::{NodeId, TextSource};
+    use shodo::style::{LineOptions, ParagraphStyle, TextAlign, TextIndent};
+
+    let fonts = test_fonts();
+    let store = TestStore::default();
+    let mut cx = shodo::LayoutContext::new();
+    let mut capture_cx = None;
+    let paragraph = |spacing, cx: &mut shodo::LayoutContext| {
+        let mut style = ParagraphStyle::default();
+        style.root.font_families = vec![shodo::style::FontFamily::Named("Ahem".into())];
+        style.root.font_size = 10.25;
+        style.root.letter_spacing = spacing;
+        let mut input = shodo::ParagraphBuilder::new(&style, &Default::default());
+        input.push_text(
+            TextSource::Dom {
+                node: NodeId(1),
+                offset: 0,
+            },
+            "123",
+        );
+        input.build(cx, &fonts).unwrap()
+    };
+    let plain = paragraph(0.0, &mut cx);
+    let options = [
+        LineOptions::default(),
+        LineOptions {
+            text_align: TextAlign::Right,
+            ..Default::default()
+        },
+        LineOptions {
+            text_align: TextAlign::Center,
+            ..Default::default()
+        },
+        LineOptions {
+            text_indent: TextIndent {
+                length: 4.375,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    ];
+    for (id, options) in options.iter().enumerate() {
+        capture(&store, id, "123", &plain, options, &mut capture_cx);
+        let measured = store.read(id, "123").unwrap();
+        let reference = store.read(0, "123").unwrap();
+        assert_eq!(measured.glyphs, reference.glyphs);
+        assert_eq!(measured.advance, 30.75);
+    }
+
+    let spaced = paragraph(1.5, &mut cx);
+    capture(&store, 4, "123", &spaced, &options[1], &mut capture_cx);
+    assert!(store.read(4, "123").is_none());
+
+    let large_indent = LineOptions {
+        text_indent: TextIndent {
+            length: 1_000_000.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    capture(&store, 5, "123", &plain, &large_indent, &mut capture_cx);
+    assert!(store.read(5, "123").is_none());
+
+    let mut unavailable_cx = None;
+    capture(&store, 0, "123", &plain, &options[0], &mut unavailable_cx);
+    assert!(unavailable_cx.is_none());
 }

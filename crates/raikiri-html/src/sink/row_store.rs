@@ -1,6 +1,7 @@
 //! Document-local backing storage for serialized body rows.
 
 mod compact;
+mod glyph_store;
 
 use std::fs::File;
 use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
@@ -357,6 +358,7 @@ pub(crate) struct TableWindows {
     rows: RowStore,
     group: usize,
     columns: Option<raikiri_dom::layout::MeasuredTableColumns>,
+    glyphs: Option<glyph_store::GlyphStore>,
 }
 
 impl TableWindows {
@@ -406,6 +408,7 @@ impl TableWindows {
             rows,
             group: group?,
             columns: None,
+            glyphs: None,
         })
     }
 
@@ -443,30 +446,40 @@ impl TableWindows {
     pub(crate) fn read_text_rows(
         &mut self,
         range: Range<usize>,
+        next_cell: &mut usize,
     ) -> io::Result<Vec<Vec<crate::TableTextCell>>> {
+        let mut ordinal = *next_cell;
         let mut rows = Vec::with_capacity(range.len());
         self.rows.visit_rows(range, |_, mut record| {
             let mut cells = Vec::new();
             while let Some(cell) = record.next_cell()? {
                 cells.push(crate::TableTextCell {
+                    ordinal,
                     cell: raikiri_traits::NodeId(cell.source_id as u64),
                     node: cell.text_id.map(|id| raikiri_traits::NodeId(id as u64)),
                     text: cell.text.to_owned(),
                 });
+                ordinal += 1;
             }
             rows.push(cells);
             Ok(())
         })?;
+        *next_cell = ordinal;
         Ok(rows)
     }
 
     pub(crate) fn measured_cell(
-        &self,
+        &mut self,
         cell: &crate::TableTextCell,
     ) -> Option<raikiri_dom::MeasuredTableCell> {
-        self.columns
-            .as_ref()?
-            .measured_cell(usize::try_from(cell.cell.0).ok()?, &cell.text)
+        let glyphs = self.glyphs.as_mut()?;
+        raikiri_dom::MeasuredTableCell::from_record(&cell.text, |bytes| {
+            glyphs.read(cell.ordinal, bytes)
+        })
+    }
+
+    pub(crate) fn discard_glyph_records(&mut self) {
+        self.glyphs = None;
     }
 
     pub(crate) fn measure_columns(
@@ -478,15 +491,10 @@ impl TableWindows {
     ) -> Result<(), raikiri_traits::RenderError> {
         use raikiri_dom::layout::TableColumnMeasurements;
 
-        let measurements = TableColumnMeasurements::with_glyph_record_budget(glyph_budget);
+        let measurements = TableColumnMeasurements::default();
+        let mut glyphs = glyph_store::GlyphStore::new(glyph_budget);
+        let mut next_cell = 0;
         let len = self.len();
-        let mut prepare = |rows| {
-            let mut shell = self
-                .document(rows)
-                .map_err(raikiri_traits::ParseError::Io)?;
-            measurements.measure_window(&mut shell.dom);
-            Ok::<_, raikiri_traits::RenderError>(shell)
-        };
         let workers = std::thread::available_parallelism().map_or(1, |n| n.get().min(4));
         for start in (0..len).step_by(window_size.get()) {
             let end = start.saturating_add(window_size.get()).min(len);
@@ -494,10 +502,28 @@ impl TableWindows {
             let chunk = (end - start).div_ceil(count);
             std::thread::scope(|scope| {
                 let mut handles = Vec::with_capacity(count - 1);
+                let mut recorders = Vec::new();
                 let measure = &measure;
                 for first in (start..end).step_by(chunk) {
                     let last = first.saturating_add(chunk).min(end);
-                    let document = prepare(first..last)?;
+                    let mut sources = Vec::new();
+                    let store = glyphs
+                        .as_ref()
+                        .filter(|store| store.can_record_from(next_cell));
+                    let mut document = self
+                        .document_with_cell_sources(first..last, store.map(|_| &mut sources))
+                        .map_err(raikiri_traits::ParseError::Io)?;
+                    let first_cell = next_cell;
+                    next_cell += sources.len();
+                    if let Some(recorder) =
+                        store.and_then(|store| store.window(first_cell, sources))
+                    {
+                        measurements
+                            .measure_window_with_recorder(&mut document.dom, recorder.clone());
+                        recorders.push(recorder);
+                    } else {
+                        measurements.measure_window(&mut document.dom);
+                    }
                     if last == end {
                         measure(document)?;
                     } else {
@@ -513,9 +539,15 @@ impl TableWindows {
                         .join()
                         .unwrap_or_else(|panic| std::panic::resume_unwind(panic))?;
                 }
+                if let Some(store) = &mut glyphs {
+                    for recorder in recorders {
+                        store.append(&recorder);
+                    }
+                }
                 Ok::<_, raikiri_traits::RenderError>(())
             })?;
         }
+        self.glyphs = glyphs;
         self.columns = Some(measurements.finish());
         Ok(())
     }
@@ -670,6 +702,14 @@ impl TableWindows {
         &mut self,
         range: Range<usize>,
     ) -> io::Result<crate::types::UncascadedDocument> {
+        self.document_with_cell_sources(range, None)
+    }
+
+    fn document_with_cell_sources(
+        &mut self,
+        range: Range<usize>,
+        mut cell_sources: Option<&mut Vec<usize>>,
+    ) -> io::Result<crate::types::UncascadedDocument> {
         let mut dom = self.shell.dom.clone();
         if let Some(columns) = &self.columns {
             columns.apply_to_window(&mut dom);
@@ -682,6 +722,9 @@ impl TableWindows {
             let row = dom.append_element(Some(self.group), "tr", None::<&str>);
             while let Some(cell) = stored.next_cell()? {
                 ids.push(cell.source_id);
+                if let Some(sources) = &mut cell_sources {
+                    sources.push(cell.source_id);
+                }
                 let id = dom.append_element(Some(row), "td", None::<&str>);
                 if let Some(text_id) = cell.text_id {
                     dom.append_text(id, cell.text);

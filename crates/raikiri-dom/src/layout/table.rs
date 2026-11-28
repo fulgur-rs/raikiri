@@ -4195,11 +4195,21 @@ impl ColumnContribution {
     }
 }
 
+/// Receives opaque glyph records from the measurement of a single table window.
+/// Source identifiers are those of the original document. A recorder may skip
+/// any record, for example when its storage budget is exhausted.
+pub trait TableGlyphRecorder: std::fmt::Debug + Send + Sync {
+    /// Indicate whether shaping a candidate of this encoded length is worthwhile.
+    fn can_write(&self, source: usize, len: usize) -> bool;
+    /// Retain a complete record for the source cell, if capacity still permits.
+    fn write(&self, source: usize, record: &[u8]);
+}
+
 /// Intrinsic column measurements shared by windows of a single horizontal table.
 #[derive(Clone, Debug, Default)]
 pub struct TableColumnMeasurements {
     columns: std::sync::Arc<std::sync::Mutex<Vec<ColumnContribution>>>,
-    pub(super) glyph_store: Option<std::sync::Arc<crate::table_glyphs::store::Store>>,
+    pub(super) glyph_store: Option<std::sync::Arc<dyn TableGlyphRecorder>>,
 }
 
 #[derive(Clone, Debug)]
@@ -4209,36 +4219,21 @@ pub(crate) enum WindowColumns {
 }
 
 impl TableColumnMeasurements {
-    /// Retain eligible glyph records within a per-document temporary file budget.
-    /// A zero budget or an unavailable temporary file disables recording.
-    pub fn with_glyph_record_budget(budget: u64) -> Self {
-        Self::with_temp_files(budget, tempfile::tempfile)
-    }
-
-    fn with_temp_files(
-        budget: u64,
-        mut open: impl FnMut() -> std::io::Result<std::fs::File>,
-    ) -> Self {
-        if budget == 0 {
-            return Self::default();
-        }
-        let Ok(data) = open() else {
-            return Self::default();
-        };
-        let Ok(index) = open() else {
-            return Self::default();
-        };
-        Self {
-            glyph_store: Some(std::sync::Arc::new(crate::table_glyphs::store::Store::new(
-                data, index, budget,
-            ))),
-            ..Self::default()
-        }
-    }
-
     /// Collect column constraints during layout of a fresh single-table window.
     pub fn measure_window(&self, document: &mut crate::document::Document) {
         document.window_columns = Some(WindowColumns::Measure(self.clone()));
+    }
+
+    /// Collect column constraints and send reusable glyphs to this window's recorder.
+    pub fn measure_window_with_recorder(
+        &self,
+        document: &mut crate::document::Document,
+        recorder: std::sync::Arc<dyn TableGlyphRecorder>,
+    ) {
+        document.window_columns = Some(WindowColumns::Measure(Self {
+            columns: self.columns.clone(),
+            glyph_store: Some(recorder),
+        }));
     }
 
     /// Finish the measurement pass and share its immutable columns across output windows.
@@ -4246,7 +4241,6 @@ impl TableColumnMeasurements {
         let columns = self.columns.lock().unwrap();
         MeasuredTableColumns {
             columns: columns.as_slice().into(),
-            glyph_store: self.glyph_store,
         }
     }
 }
@@ -4255,15 +4249,9 @@ impl TableColumnMeasurements {
 #[derive(Clone, Debug)]
 pub struct MeasuredTableColumns {
     columns: std::sync::Arc<[ColumnContribution]>,
-    glyph_store: Option<std::sync::Arc<crate::table_glyphs::store::Store>>,
 }
 
 impl MeasuredTableColumns {
-    /// Read the measured glyphs for a source cell if its text matches the record.
-    pub fn measured_cell(&self, source_id: usize, text: &str) -> Option<crate::MeasuredTableCell> {
-        crate::table_glyphs::read(self.glyph_store.as_deref()?, source_id, text)
-    }
-
     /// Sum of preferred column widths before distribution into the table box.
     pub fn preferred_width(&self) -> f32 {
         self.columns.iter().map(|column| column.preferred).sum()
