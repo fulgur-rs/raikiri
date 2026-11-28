@@ -59,6 +59,7 @@ const CHECKPOINT_BYTES: usize = 64 * 1024;
 /// A plain body cell with its original document identities.
 #[non_exhaustive]
 pub struct TableTextCell {
+    pub(crate) ordinal: usize,
     /// The cell element.
     pub cell: NodeId,
     /// The source text node, absent for an empty cell.
@@ -72,12 +73,21 @@ pub struct TableTextRows<'a> {
     windows: &'a mut crate::sink::row_store::TableWindows,
     signal: Option<&'a raikiri_traits::AbortSignal>,
     next: usize,
+    next_cell: usize,
 }
 
 impl TableTextRows<'_> {
     /// Total number of body rows in the input.
     pub fn row_count(&self) -> usize {
         self.windows.len()
+    }
+
+    /// Read glyphs retained during column measurement for a cell from this table.
+    pub fn measured_cell(
+        &mut self,
+        cell: &TableTextCell,
+    ) -> Option<raikiri_dom::MeasuredTableCell> {
+        self.windows.measured_cell(cell)
     }
 
     /// Read the next batch, or an empty vector at the end.
@@ -89,7 +99,9 @@ impl TableTextRows<'_> {
             ));
         }
         let end = self.next.saturating_add(128).min(self.row_count());
-        let rows = self.windows.read_text_rows(self.next..end)?;
+        let rows = self
+            .windows
+            .read_text_rows(self.next..end, &mut self.next_cell)?;
         self.next = end;
         Ok(rows)
     }
@@ -125,6 +137,17 @@ pub trait PageSink {
     /// Whether the sink can stage a whole plain table from a layout sample.
     fn wants_table_sample(&self) -> bool {
         false
+    }
+
+    /// Maximum temporary bytes per document for measured glyphs and their index.
+    /// Column measurement uses this budget before the sink is asked whether
+    /// it wants a sample. Sinks that can already rule out using measured cells
+    /// should return zero, the default, to skip recording.
+    /// For large, mostly ASCII tables,
+    /// 32 MiB is a suggested starting budget. Cells without a record remain
+    /// available through their text in the sample.
+    fn table_glyph_record_budget(&self) -> u64 {
+        0
     }
 
     /// Try to stage the complete input using a sample with the measured
@@ -1510,7 +1533,12 @@ impl<S: PageSink> Write for StreamingLayout<'_, '_, S> {
         if !matches!(self.failure, Failure::None) {
             return Err(std::io::Error::other(failed_earlier().to_string()));
         }
-        match self.feed_unchecked(buf) {
+        // A write-only stream uses the regular parser. Once feed starts probing,
+        // the probe must see every later byte, including bytes supplied by Write.
+        if !buf.is_empty() && self.table_prefix.as_ref().is_some_and(Vec::is_empty) {
+            self.table_prefix = None;
+        }
+        match self.feed_selecting_table(buf) {
             Ok(()) => Ok(buf.len()),
             Err(error) => {
                 let io = std::io::Error::other(error.to_string());
@@ -1587,7 +1615,13 @@ fn stream_table_windows<S: PageSink>(
         .map(|net| net as &dyn NetworkProvider);
     let options = resources.parse_options(&extra, network);
     let limits = resources.parse_limits();
-    let measured = windows.measure_columns(window_size, |shell| {
+    let large_table = windows.len() > window_size.get();
+    let glyph_budget = if template_styles && large_table {
+        sink.table_glyph_record_budget()
+    } else {
+        0
+    };
+    let measured = windows.measure_columns(window_size, glyph_budget, |shell| {
         let document =
             assemble_resolved(resources, &config.media_context, shell, &options, &limits)?;
         crate::render::measure_table_columns(
@@ -1613,11 +1647,7 @@ fn stream_table_windows<S: PageSink>(
         .limits
         .max_document_pages
         .unwrap_or(u32::MAX);
-    if template_styles
-        && measured.is_ok()
-        && sink.wants_table_sample()
-        && windows.len() > window_size.get()
-    {
+    if template_styles && measured.is_ok() && sink.wants_table_sample() && large_table {
         let shell = windows
             .document(0..window_size.get())
             .map_err(ParseError::Io)?;
@@ -1655,6 +1685,7 @@ fn stream_table_windows<S: PageSink>(
                     windows,
                     signal: config.signal.as_ref(),
                     next: 0,
+                    next_cell: 0,
                 };
                 let result = sink.stage_table_sample(&sample, &ending, &mut rows);
                 let aborted = config
@@ -1676,6 +1707,7 @@ fn stream_table_windows<S: PageSink>(
             }
         }
     }
+    windows.discard_glyph_records();
     let mut stage_failed = false;
     let plan = measured.and_then(|()| {
         windows.plan_pages_with(window_size, render, |layout, pages| {

@@ -4195,9 +4195,22 @@ impl ColumnContribution {
     }
 }
 
+/// Receives opaque glyph records from the measurement of a single table window.
+/// Source identifiers are those of the original document. A recorder may skip
+/// any record, for example when its storage budget is exhausted.
+pub trait TableGlyphRecorder: std::fmt::Debug + Send + Sync {
+    /// Indicate whether shaping a candidate of this encoded length is worthwhile.
+    fn can_write(&self, source: usize, len: usize) -> bool;
+    /// Retain a complete record for the source cell, if capacity still permits.
+    fn write(&self, source: usize, record: &[u8]);
+}
+
 /// Intrinsic column measurements shared by windows of a single horizontal table.
 #[derive(Clone, Debug, Default)]
-pub struct TableColumnMeasurements(std::sync::Arc<std::sync::Mutex<Vec<ColumnContribution>>>);
+pub struct TableColumnMeasurements {
+    columns: std::sync::Arc<std::sync::Mutex<Vec<ColumnContribution>>>,
+    pub(super) glyph_store: Option<std::sync::Arc<dyn TableGlyphRecorder>>,
+}
 
 #[derive(Clone, Debug)]
 pub(crate) enum WindowColumns {
@@ -4211,26 +4224,42 @@ impl TableColumnMeasurements {
         document.window_columns = Some(WindowColumns::Measure(self.clone()));
     }
 
+    /// Collect column constraints and send reusable glyphs to this window's recorder.
+    pub fn measure_window_with_recorder(
+        &self,
+        document: &mut crate::document::Document,
+        recorder: std::sync::Arc<dyn TableGlyphRecorder>,
+    ) {
+        document.window_columns = Some(WindowColumns::Measure(Self {
+            columns: self.columns.clone(),
+            glyph_store: Some(recorder),
+        }));
+    }
+
     /// Finish the measurement pass and share its immutable columns across output windows.
     pub fn finish(self) -> MeasuredTableColumns {
-        let columns = self.0.lock().unwrap();
-        MeasuredTableColumns(columns.as_slice().into())
+        let columns = self.columns.lock().unwrap();
+        MeasuredTableColumns {
+            columns: columns.as_slice().into(),
+        }
     }
 }
 
 /// Column constraints for the output windows of a measured single table.
 #[derive(Clone, Debug)]
-pub struct MeasuredTableColumns(std::sync::Arc<[ColumnContribution]>);
+pub struct MeasuredTableColumns {
+    columns: std::sync::Arc<[ColumnContribution]>,
+}
 
 impl MeasuredTableColumns {
     /// Sum of preferred column widths before distribution into the table box.
     pub fn preferred_width(&self) -> f32 {
-        self.0.iter().map(|column| column.preferred).sum()
+        self.columns.iter().map(|column| column.preferred).sum()
     }
 
     /// Use the measured constraints during layout of a fresh single-table window.
     pub fn apply_to_window(&self, document: &mut crate::document::Document) {
-        document.window_columns = Some(WindowColumns::Apply(self.0.clone()));
+        document.window_columns = Some(WindowColumns::Apply(self.columns.clone()));
     }
 }
 
@@ -4238,7 +4267,7 @@ impl WindowColumns {
     fn combine(&self, columns: &mut [ColumnContribution]) {
         match self {
             Self::Measure(measurements) => {
-                let mut measured = measurements.0.lock().unwrap();
+                let mut measured = measurements.columns.lock().unwrap();
                 if measured.len() < columns.len() {
                     measured.resize(columns.len(), ColumnContribution::default());
                 }

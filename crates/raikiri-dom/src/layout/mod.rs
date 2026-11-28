@@ -45,7 +45,7 @@ pub(crate) mod protocol;
 pub(crate) mod style_views;
 pub(crate) mod table;
 #[doc(hidden)]
-pub use table::{MeasuredTableColumns, TableColumnMeasurements};
+pub use table::{MeasuredTableColumns, TableColumnMeasurements, TableGlyphRecorder};
 pub(crate) mod taffy_adapter;
 
 fn style_dimension_length(value: Dimension) -> Option<f32> {

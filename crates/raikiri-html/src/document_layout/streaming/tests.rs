@@ -33,6 +33,8 @@ struct Record {
     abort_before_sample: Option<AbortController>,
     complete_sample_count: Option<u32>,
     sample_rows: usize,
+    glyph_budget: u64,
+    measured_cells: usize,
     paint_lines: Vec<Vec<NodeId>>,
     fragment_rects: Vec<Vec<raikiri_traits::PaintRect>>,
     stage_before: Option<u32>,
@@ -93,6 +95,10 @@ impl PageSink for &mut Record {
         self.inspect_sample
     }
 
+    fn table_glyph_record_budget(&self) -> u64 {
+        self.glyph_budget
+    }
+
     fn stage_table_sample(
         &mut self,
         sample: &DocumentLayout,
@@ -118,6 +124,7 @@ impl PageSink for &mut Record {
                 assert_eq!(row.len(), 1);
                 assert_eq!(row[0].text, format!("row & {}", self.sample_rows));
                 assert!(row[0].node.unwrap() > row[0].cell);
+                self.measured_cells += usize::from(rows.measured_cell(&row[0]).is_some());
                 self.sample_rows += 1;
             }
             if self.sample_rows >= 256 && self.complete_sample_count.is_none() {
@@ -298,21 +305,29 @@ fn write_feeds_the_layout() {
 #[test]
 fn write_errors_are_returned_unchanged_by_finish() {
     let resources = RenderResources::new();
-    let mut record = Record::default();
-    let mut stream = StreamingLayout::new(
-        &resources,
-        PageDefaults::default(),
-        LayoutConfig::default(),
-        &mut record,
-    );
-    assert!(stream.write_all(b"<p>\xFF</p>").is_err());
-    assert!(stream.write_all(b"more").is_err(), "input stays failed");
-    let error = stream.finish().expect_err("finish fails");
-    assert!(matches!(
-        error,
-        RenderError::Parse(ParseError::Encoding { .. })
-    ));
-    assert!(!record.finished);
+    for feed_prefix in [false, true] {
+        let mut record = Record::default();
+        let mut stream = StreamingLayout::new(
+            &resources,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            &mut record,
+        );
+        let invalid: &[u8] = if feed_prefix {
+            stream.feed(b"<p>").unwrap();
+            b"\xFF</p>"
+        } else {
+            b"<p>\xFF</p>"
+        };
+        assert!(stream.write_all(invalid).is_err());
+        assert!(stream.write_all(b"more").is_err(), "input stays failed");
+        let error = stream.finish().expect_err("finish fails");
+        assert!(matches!(
+            error,
+            RenderError::Parse(ParseError::Encoding { .. })
+        ));
+        assert!(!record.finished);
+    }
 }
 
 #[test]
@@ -2259,6 +2274,85 @@ fn sample_table_html() -> String {
 }
 
 #[test]
+fn starting_with_write_preserves_regular_layout_for_write_and_feed() {
+    let html = sample_table_html();
+    let expected = batch_pages(&html);
+    let resources = RenderResources::new();
+    for finish_with_feed in [false, true] {
+        let mut sink = Record::default();
+        let mut stream = StreamingLayout::new(
+            &resources,
+            Default::default(),
+            Default::default(),
+            &mut sink,
+        );
+        let (first, rest) = html.as_bytes().split_at(1);
+        stream.write_all(first).unwrap();
+        if finish_with_feed {
+            stream.feed(rest).unwrap();
+        } else {
+            stream.write_all(rest).unwrap();
+        }
+        assert!(stream.table_input.is_none());
+        completed(stream.finish().unwrap());
+        assert_eq!(sink.offered_table_pages, 0);
+        assert_eq!(sink.pages, expected);
+    }
+}
+
+#[test]
+fn a_sink_with_a_glyph_budget_can_decline_the_sample_after_measurement() {
+    let html = sample_table_html();
+    let mut sink = Record {
+        glyph_budget: 32 * 1024 * 1024,
+        ..Default::default()
+    };
+    completed(stream(&html, 8192, &mut sink, Default::default()).unwrap());
+    assert_eq!(sink.sample_rows, 0);
+    assert!(sink.offered_table_pages > 0);
+    assert_eq!(sink.pages, batch_pages(&html));
+}
+
+#[test]
+fn mixed_write_and_feed_deliver_measured_cells_within_the_sink_budget() {
+    let html = sample_table_html();
+    let fonts = crate::FontCollectionBuilder::new()
+        .font_bytes(
+            "Ahem",
+            include_bytes!("../../../../raikiri-dom/tests/data/text-autospace/Ahem.ttf").as_slice(),
+        )
+        .build()
+        .unwrap();
+    let resources = RenderResources::new()
+        .fonts(fonts)
+        .stylesheet("body{font-family:Ahem;font-size:12px}");
+    for glyph_budget in [0, 1, 32 * 1024 * 1024] {
+        let mut sink = Record {
+            inspect_sample: true,
+            complete_sample_count: Some(1),
+            glyph_budget,
+            ..Default::default()
+        };
+        let mut stream = StreamingLayout::new(
+            &resources,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            &mut sink,
+        );
+        let (prefix, rest) = html.as_bytes().split_at(CHECKPOINT_BYTES - 1);
+        assert_eq!(stream.write(&[]).unwrap(), 0);
+        stream.feed(prefix).unwrap();
+        stream.write_all(&rest[..1]).unwrap();
+        assert!(stream.table_input.is_some());
+        stream.write_all(&rest[1..2]).unwrap();
+        stream.feed(&rest[2..]).unwrap();
+        completed(stream.finish().unwrap());
+        assert_eq!(sink.sample_rows, 600);
+        assert_eq!(sink.measured_cells, if glyph_budget > 1 { 600 } else { 0 });
+    }
+}
+
+#[test]
 fn an_incomplete_table_sample_discards_its_pages_and_replays_the_source() {
     let html = sample_table_html();
     let mut record = Record {
@@ -2385,6 +2479,7 @@ fn cancelling_before_the_first_table_sample_reports_aborted() {
     let mut sink = Record {
         inspect_sample: true,
         abort_before_sample: Some(controller),
+        glyph_budget: 1024,
         ..Default::default()
     };
     assert!(matches!(
