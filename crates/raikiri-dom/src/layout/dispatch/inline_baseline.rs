@@ -739,10 +739,10 @@ pub(crate) fn grid_baseline_shims(
         })
     };
     let mut widest: FxHashMap<(u16, bool), Option<f32>> = FxHashMap::default();
-    for &(child, set, margin) in candidates {
-        let Some(group) = group_of(child, set) else {
-            continue;
-        };
+    let grouped = candidates
+        .iter()
+        .filter_map(|&(child, set, margin)| Some((group_of(child, set)?, margin)));
+    for (group, margin) in grouped {
         let entry = widest.entry(group).or_insert(Some(f32::NEG_INFINITY));
         *entry = entry.zip(margin).map(|(seen, margin)| seen.max(margin));
     }

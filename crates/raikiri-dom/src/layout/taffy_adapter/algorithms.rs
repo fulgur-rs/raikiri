@@ -171,15 +171,12 @@ pub(super) fn with_grid_baseline_shims<R>(
         .collect();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| layout(tree)));
     for (item, shim) in held {
-        match shim {
-            Some(shim) => tree.context.grid_baseline_shims.insert(item, shim),
-            None => tree.context.grid_baseline_shims.remove(&item),
-        };
+        tree.context.grid_baseline_shims.remove(&item);
+        tree.context
+            .grid_baseline_shims
+            .extend(shim.map(|shim| (item, shim)));
     }
-    match result {
-        Ok(value) => value,
-        Err(payload) => std::panic::resume_unwind(payload),
-    }
+    result.unwrap_or_else(|payload| std::panic::resume_unwind(payload))
 }
 
 /// The length to add to the left margin of each item of the grid container
