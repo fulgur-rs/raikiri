@@ -27,6 +27,10 @@ pub(in crate::layout::multicol) struct PagedPiece {
     /// of its piece, whose rect `rect` and `clip` are relative to; `None` for
     /// a piece placed in the container.
     pub(in crate::layout::multicol) parent: Option<(usize, usize)>,
+    /// Whether the piece is that of a box of a sliced flex container, which
+    /// has no records of its own until the pages place it in the container's
+    /// pieces.
+    pub(in crate::layout::multicol) item: bool,
 }
 
 /// The pieces and the page groups of a container, and where its columns end
@@ -280,7 +284,13 @@ pub(in crate::layout::multicol) fn paginate(
             .iter()
             .filter(|piece| piece.column / columns < kept)
             .collect();
-        let sliced = own.len() > 1 && slices_decorations(tree, child);
+        // A flex container shows its items in each piece, as in the layout
+        // of the container, so its pieces are the whole box moved up.
+        // The boxes of a sliced flex container that the pages fill again get
+        // their records afresh each time the pages place it, in one piece or
+        // more.
+        let flex = refills_on_pages(tree, child, size.height);
+        let sliced = own.len() > 1 && (flex || slices_decorations(tree, child));
         let offset = super::inline_offset(tree, child, context, size.width);
         // The pieces of a wrapper that slices its decorations show what its
         // boxes take of each column, with the margins a break cuts.
@@ -335,8 +345,12 @@ pub(in crate::layout::multicol) fn paginate(
                 index,
                 count: own.len(),
                 parent: None,
+                item: false,
             });
             taken += consumed[index];
+        }
+        if flex {
+            push_flex_items(tree, child, (first_piece, own.len()), &consumed, &mut out);
         }
         if let (Some(wrapped_tree), Some(leaf_pieces)) = (&wrapped[order], &leaf_pieces[order]) {
             let frame = Frame {
@@ -570,8 +584,79 @@ fn push_inside(
             index,
             count: own.len(),
             parent: Some((parent.node, parent_index)),
+            item: false,
         });
         taken += piece.height;
     }
     Some(())
+}
+
+/// Add to `out` the pieces of the boxes that `container`, a sliced flex or
+/// grid container, holds: one in each of its pieces, from `first` on in
+/// `out`, that the box reaches. Each piece of the container is the whole box
+/// moved up, so a box stands in it where the container laid it out, and the
+/// clip of the piece cuts it; a box that a piece does not reach has no piece
+/// there, so each box is reported only where it shows. `kept` is the number
+/// of the container's pieces on the pages kept, and `consumed` gives what
+/// each piece of the container takes of it.
+fn push_flex_items(
+    tree: &LayoutSession<'_>,
+    container: usize,
+    (first, kept): (usize, usize),
+    consumed: &[f32],
+    out: &mut Out,
+) {
+    let mut starts = Vec::with_capacity(consumed.len());
+    let mut taken = 0.0f32;
+    for &height in consumed {
+        starts.push((taken, taken + height));
+        taken += height;
+    }
+    for item in in_flow_elements(tree, container) {
+        let layout = tree.nodes[item].layout;
+        let (top, bottom) = (layout.location.y, layout.location.y + layout.size.height);
+        // A box with no block size, or one above the first piece, shows in
+        // the piece its top falls in.
+        let mut reached: Vec<usize> = starts
+            .iter()
+            .enumerate()
+            .filter(|&(_, &(start, end))| {
+                bottom > top && top < end - EPSILON && bottom > start + EPSILON
+            })
+            .map(|(index, _)| index)
+            .collect();
+        if reached.is_empty() {
+            reached.push(
+                starts
+                    .iter()
+                    .rposition(|&(start, _)| top >= start)
+                    .unwrap_or(0)
+                    .min(kept.saturating_sub(1)),
+            );
+        }
+        // The pieces past the pages kept are not placed, nor what they show.
+        let placed: Vec<(usize, usize)> = reached
+            .into_iter()
+            .filter(|&index| index < kept)
+            .map(|index| (index, out.pieces[first + index].fragmentainer))
+            .collect();
+        let count = placed.len();
+        for (position, (index, fragmentainer)) in placed.into_iter().enumerate() {
+            out.pieces.push(PagedPiece {
+                child: item,
+                fragmentainer,
+                rect: FragmentRect {
+                    x: layout.location.x,
+                    y: top,
+                    width: layout.size.width,
+                    height: layout.size.height,
+                },
+                clip: None,
+                index: position,
+                count,
+                parent: Some((container, index)),
+                item: true,
+            });
+        }
+    }
 }

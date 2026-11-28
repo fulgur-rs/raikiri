@@ -879,6 +879,72 @@ fn breaks_between_items(tree: &LayoutSession<'_>, id: usize) -> bool {
     }
 }
 
+/// Whether the pages that cut the container can fill its columns again from
+/// the sliced flex containers among its children (see [`refills_on_pages`]).
+/// A container with any other sliced flex container keeps the columns the
+/// layout gave it.
+fn pages_refill_flex(
+    tree: &LayoutSession<'_>,
+    children: &[usize],
+    sliced_flex: &[bool],
+    shapes: &[Option<monolithic::Shape>],
+    flex_breaks: &[Option<FlexBreaks>],
+) -> bool {
+    children
+        .iter()
+        .zip(sliced_flex)
+        .zip(shapes)
+        .zip(flex_breaks)
+        .all(|(((&child, &flex), shape), breaks)| {
+            !flex
+                || shape.is_none()
+                    && breaks.as_ref().is_some_and(|breaks| {
+                        !breaks.before && !breaks.after && breaks.parts.is_empty()
+                    })
+                    && holds_only_still_empty_boxes(tree, child)
+        })
+}
+
+/// Whether the pages can place `id`, a sliced flex, grid or table container
+/// of block size `height`, as pieces that are the whole box moved up wherever
+/// a column ends (see `paged::paginate`): no break moves its boxes, as none
+/// is kept whole, none follows space a break truncates and no forced break
+/// falls around or inside it, and its boxes hold nothing, as the pages place
+/// no lines inside them, and stand where they are laid out inside the box.
+pub(super) fn refills_on_pages(tree: &LayoutSession<'_>, id: usize, height: f32) -> bool {
+    is_sliced_formatting_container(tree, id)
+        && sliceable_flex_container(tree, id, Some(height)).is_some()
+        && matches!(monolithic::Shape::build(tree, id), Ok(None))
+        && {
+            let breaks = flex_breaks(tree, id, height);
+            !breaks.before && !breaks.after && breaks.parts.is_empty()
+        }
+        && holds_only_still_empty_boxes(tree, id)
+}
+
+/// Whether the boxes in flow inside `id` hold nothing that renders, no text
+/// stands beside them, and none is moved by relative offsets or reaches past
+/// `id` inline, so that each shows in the columns its laid-out block range
+/// falls in and the clip of a column covers it.
+fn holds_only_still_empty_boxes(tree: &LayoutSession<'_>, id: usize) -> bool {
+    let width = layout_node(tree, id).layout.size.width;
+    flow_children(tree, id).into_iter().all(|child| {
+        let node = layout_node(tree, child);
+        !node.is_in_document()
+            || node.is_display_none()
+            || match &node.data {
+                NodeData::Text(text) => text.text_content.trim().is_empty(),
+                _ => {
+                    let layout = node.layout;
+                    !has_rendered_content(tree, child, false)
+                        && node.layout_position() == Position::Static
+                        && layout.location.x >= -EPSILON
+                        && layout.location.x + layout.size.width <= width + EPSILON
+                }
+            }
+    })
+}
+
 /// Whether `id` is a flex, grid or table container, which the stream slices
 /// whole when it can (see [`sliceable_flex_container`]).
 fn is_sliced_formatting_container(tree: &LayoutSession<'_>, id: usize) -> bool {
@@ -3744,7 +3810,7 @@ pub(super) fn layout(
         && tree.context.fragmentation_stack.len() <= 1
         && !tree.context.unpaged_plain_columns
         && absolute.iter().all(Vec::is_empty)
-        && !sliced_flex.contains(&true)
+        && pages_refill_flex(tree, children, &sliced_flex, &shapes, &flex_breaks)
     {
         tree.nodes[parent].multicol_groups.push(MulticolGroup {
             context: FragmentationContext {

@@ -1097,7 +1097,13 @@ fn install_lineless_pieces(
             x: fragments[0].rect.x,
             y: fragments[0].rect.y,
         };
-        edits.replace(id, fragments);
+        // The boxes of a sliced flex container have no records of their own
+        // until the pages place them in its pieces.
+        if pieces.iter().any(|piece| piece.item) {
+            edits.replace_or_add(id, fragments);
+        } else {
+            edits.replace(id, fragments);
+        }
     }
     for (id, location) in nested {
         tree.nodes[id].layout.location = location;

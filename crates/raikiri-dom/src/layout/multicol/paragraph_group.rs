@@ -799,6 +799,12 @@ struct Paragraph {
     /// A forced column break comes before the box, from its own
     /// `break-before` or the `break-after` of the box before it.
     break_before: bool,
+    /// A break between columns before the box is avoided, by its own
+    /// `break-before` or the `break-after` of the box before it (`avoid` or
+    /// `avoid-column`): a column end that would fall there falls at the last
+    /// break before it in its column that nothing avoids (CSS Fragmentation
+    /// 3, 4.4).
+    avoids_before: bool,
     /// A paragraph that avoids breaks between columns inside it
     /// (`break-inside: avoid` or `avoid-column`): it goes on whole to the
     /// next column when the rest of its column is too short for it, and
@@ -828,6 +834,7 @@ impl Paragraph {
     fn whole_box(height: f32, margin_top: f32, margin_bottom: f32, lines: Option<usize>) -> Self {
         Self {
             break_before: false,
+            avoids_before: false,
             opens: None,
             closes: false,
             sized_leaf: false,
@@ -1380,6 +1387,7 @@ fn collect(
                 edge > 0.0 || tail.is_some() || starts_formatting_context(layout_node(tree, child));
             paragraphs.push(Some(Paragraph {
                 break_before: false,
+                avoids_before: false,
                 opens: match role {
                     Role::Open(close) if separates => Some(close),
                     _ => None,
@@ -1429,6 +1437,7 @@ fn collect(
             room = true;
             paragraphs.push(Some(Paragraph {
                 break_before: false,
+                avoids_before: false,
                 sized_leaf: true,
                 sliced,
                 slice_edges: own_slice_edges(tree, child, sliced, &layout),
@@ -1457,6 +1466,7 @@ fn collect(
             let whole = Paragraph::whole_box(output.size.height, margin_top, margin_bottom, None);
             paragraphs.push(Some(Paragraph {
                 break_before: false,
+                avoids_before: false,
                 opens: None,
                 closes: false,
                 sliced,
@@ -1514,6 +1524,7 @@ fn collect(
                 && node.ifc.as_ref().is_some_and(|root| root.boxes.is_empty());
             paragraphs.push(Some(Paragraph {
                 break_before: false,
+                avoids_before: false,
                 opens: None,
                 closes: false,
                 sliced,
@@ -1547,6 +1558,7 @@ fn collect(
             high += output.size.height + margin_top.abs() + margin_bottom.abs();
             paragraphs.push(Some(Paragraph {
                 break_before: false,
+                avoids_before: false,
                 opens: None,
                 closes: false,
                 overflows: true,
@@ -1619,6 +1631,7 @@ fn collect(
             high += margin_top.abs() + margin_bottom.abs();
             paragraphs.push(Some(Paragraph {
                 break_before: false,
+                avoids_before: false,
                 opens: None,
                 closes: false,
                 sized_leaf: false,
@@ -1657,6 +1670,7 @@ fn collect(
         let (edge_start, edge_end) = block_edges(&layout);
         paragraphs.push(Some(Paragraph {
             break_before: false,
+            avoids_before: false,
             opens: None,
             closes: false,
             sized_leaf: false,
@@ -1688,6 +1702,8 @@ fn collect(
         // or after the wrapper (CSS Fragmentation 3, 3.1). White space
         // between them takes no part.
         let mut after = false;
+        let mut avoided_after = false;
+        let mut first = true;
         for index in 0..entries.len() {
             if paragraphs[index].is_none() {
                 continue;
@@ -1696,24 +1712,43 @@ fn collect(
             let role = flow.roles[index];
             if role == Role::Close {
                 after |= node.break_after == BreakBetween::Column;
+                avoided_after |= avoids(node.break_after);
                 continue;
             }
             // The outermost wrapper that starts with this box.
             let mut start = index;
             let mut probe = index;
+            // Whether a wrapper that starts with this box avoids a break
+            // before itself.
+            let mut wrapper_avoids = false;
             while let Some(previous) = probe.checked_sub(1) {
                 probe = previous;
                 match flow.roles[probe] {
-                    Role::Open(_) => start = probe,
+                    Role::Open(_) => {
+                        start = probe;
+                        wrapper_avoids |= avoids(layout_node(tree, entries[probe].0).break_before);
+                    }
                     _ if paragraphs[probe].is_none() => {}
                     _ => break,
                 }
             }
             let forced_before = after || node.break_before == BreakBetween::Column;
+            // The start of the flow has no break before it to avoid.
+            let avoided_before =
+                !first && (avoided_after || wrapper_avoids || avoids(node.break_before));
             paragraphs[start]
                 .iter_mut()
                 .for_each(|paragraph| paragraph.break_before |= forced_before);
+            // The break before the wrappers that start with the box is the
+            // one before the box: whichever of them a column end comes before
+            // keeps clear of it.
+            paragraphs[start..=index]
+                .iter_mut()
+                .flatten()
+                .for_each(|paragraph| paragraph.avoids_before |= avoided_before);
             after = role == Role::Box && node.break_after == BreakBetween::Column;
+            avoided_after = role == Role::Box && avoids(node.break_after);
+            first = false;
         }
     }
     Some(Collected {
@@ -1728,9 +1763,15 @@ fn collect(
 
 /// Whether a box with `value` before or after it is left to the other
 /// strategies: with `forced`, all but a forced column break, which Chromium
-/// takes, as it does not take `always` inside columns.
+/// takes, as it does not take `always` inside columns, and a break between
+/// columns that is avoided, which the fill keeps clear of.
 fn refuses_break(value: BreakBetween, forced: bool) -> bool {
-    sets_break_in_columns(value) && !(forced && value == BreakBetween::Column)
+    sets_break_in_columns(value) && !(forced && (value == BreakBetween::Column || avoids(value)))
+}
+
+/// Whether `value` avoids a break between columns.
+fn avoids(value: BreakBetween) -> bool {
+    matches!(value, BreakBetween::Avoid | BreakBetween::AvoidColumn)
 }
 
 /// What [`collect`] makes of the entries of a flow.
@@ -1923,6 +1964,7 @@ fn fill_strictly(
         false,
         true,
         false,
+        true,
     )?;
     chunk.next.is_none().then_some(chunk.group)
 }
@@ -1945,6 +1987,7 @@ fn fill_chunk(
         trailing_margin,
         false,
         false,
+        false,
     )
 }
 
@@ -1954,6 +1997,16 @@ fn fill_chunk(
 /// the page comes before the first column, so a break before the columns is
 /// left: a paragraph that avoids breaks inside it and that the first column
 /// cannot hold fails the fill, and the columns go on at the next page.
+///
+/// A column end that falls where a break is avoided
+/// ([`Paragraph::avoids_before`]) moves up to the last break before it in
+/// its column that nothing avoids, so the box after that break starts the
+/// next column, and the margins above it are cut, as at any unforced break
+/// (CSS Fragmentation 3, 4.4). With no such break, the column ends where it
+/// would, unless the fill is a `trial` of balanced columns, which fails
+/// instead, so that taller columns keep the break clear, as Chromium balances
+/// them.
+#[allow(clippy::too_many_arguments)]
 fn fill_chunk_with(
     paragraphs: &[Option<Paragraph>],
     context: FragmentationContext,
@@ -1962,6 +2015,201 @@ fn fill_chunk_with(
     trailing_margin: bool,
     strict: bool,
     follows_content: bool,
+    trial: bool,
+) -> Option<Chunk> {
+    // The entries before which a column end moved up, which start the next
+    // column, as after a forced break, without the margins above them.
+    let mut moved: Vec<usize> = Vec::new();
+    // The fill moves the column ends inside the chunk as it goes. The one
+    // that ends its last column, which only the end of the fill shows, takes
+    // another fill, at most one for each column of the chunk, as each moves
+    // a break that no fill moved before.
+    loop {
+        let chunk = fill_chunk_once(
+            paragraphs,
+            context,
+            height,
+            resume,
+            trailing_margin,
+            strict,
+            follows_content,
+            trial,
+            &mut moved,
+        )?;
+        let Some(next) = chunk.next.filter(|next| {
+            next.paragraph > resume.paragraph
+                && avoids_break_before(paragraphs, next.paragraph, &moved)
+        }) else {
+            return Some(chunk);
+        };
+        let end = next.paragraph;
+        // The last column ends before the box, or the box went on from the
+        // column it was to start in to the last one, which cuts it.
+        let column = if next.line == 0 {
+            last_column_of(&chunk)
+        } else {
+            chunk.group.placements[end - resume.paragraph]
+                .as_ref()
+                .filter(|placement| placement.first_column > placement.entry_column)
+                .map(|placement| placement.entry_column)
+        };
+        let Some(column) = column else {
+            return Some(chunk);
+        };
+        match movable_break(
+            paragraphs,
+            &chunk.group.placements,
+            resume,
+            end,
+            column,
+            &moved,
+        ) {
+            Some(index) => note_moved(&mut moved, index),
+            // The column end stays where it falls, unless the fill is a trial.
+            None => return (!trial).then_some(chunk),
+        }
+    }
+}
+
+/// Whether a break before the entry `index` is avoided
+/// ([`Paragraph::avoids_before`]) and nothing forces one there, the entry
+/// taking room in its column.
+fn avoids_break_before(paragraphs: &[Option<Paragraph>], index: usize, moved: &[usize]) -> bool {
+    paragraphs
+        .get(index)
+        .and_then(Option::as_ref)
+        .is_some_and(|box_| {
+            box_.avoids_before && !breaks_before(box_, index, moved) && takes_room(box_)
+        })
+}
+
+/// Whether a break comes before the entry `index`, forced or moved up there.
+fn breaks_before(paragraph: &Paragraph, index: usize, moved: &[usize]) -> bool {
+    paragraph.break_before || moved.binary_search(&index).is_ok()
+}
+
+/// Whether `paragraph` has lines or a height of its own, rather than being
+/// the start or end of a wrapper with no padding, or an empty box.
+fn takes_room(paragraph: &Paragraph) -> bool {
+    !paragraph.extents.is_empty() && !paragraph.is_edge()
+}
+
+/// Adds `index` to the sorted entries `moved`.
+fn note_moved(moved: &mut Vec<usize>, index: usize) {
+    if let Err(at) = moved.binary_search(&index) {
+        moved.insert(at, index);
+    }
+}
+
+/// The box after the last break before the entry `end` in its `column`,
+/// placed as `placements` from `resume` on, that nothing avoids, which a
+/// column end before `end` may move up to: a break after content in the
+/// column, before a box that the column end has not cut and that follows no
+/// padding of a wrapper, which goes on with the box.
+fn movable_break(
+    paragraphs: &[Option<Paragraph>],
+    placements: &[Option<Placement>],
+    resume: FlowCursor,
+    end: usize,
+    column: usize,
+    moved: &[usize],
+) -> Option<usize> {
+    let placement = |index: usize| {
+        placements
+            .get(index.checked_sub(resume.paragraph)?)?
+            .as_ref()
+    };
+    let movable = |index: usize| {
+        index > resume.paragraph
+            && paragraphs[index].as_ref().is_some_and(|paragraph| {
+                !paragraph.avoids_before
+                    && !breaks_before(paragraph, index, moved)
+                    && !paragraph.closes
+            })
+            && !follows_padding(paragraphs, index)
+            && placement(index).is_some_and(|placement| {
+                placement.entry_column == column && placement.first_column == column
+            })
+    };
+    let mut candidate = None;
+    for index in (resume.paragraph..end).rev() {
+        let Some(placement) =
+            placement(index).filter(|_| paragraphs[index].as_ref().is_some_and(takes_room))
+        else {
+            continue;
+        };
+        if placement.last_column < column {
+            break;
+        }
+        if candidate.is_some() {
+            // Content comes before the break in its column.
+            return candidate;
+        }
+        if placement.first_column < column {
+            break;
+        }
+        if movable(index) {
+            candidate = Some(index);
+        }
+    }
+    None
+}
+
+/// Whether the entry `index` comes right after the padding above the first
+/// box of a wrapper, through entries that take no room, such as the starts of
+/// wrappers with no padding.
+fn follows_padding(paragraphs: &[Option<Paragraph>], index: usize) -> bool {
+    for previous in paragraphs[..index].iter().rev() {
+        match previous {
+            None => {}
+            Some(previous) if previous.extents.is_empty() || previous.is_edge() => {}
+            Some(previous) => return previous.opens.is_some(),
+        }
+    }
+    false
+}
+
+/// The last column that `chunk` placed content in.
+fn last_column_of(chunk: &Chunk) -> Option<usize> {
+    chunk
+        .group
+        .placements
+        .iter()
+        .flatten()
+        .map(|placement| placement.last_column)
+        .max()
+}
+
+/// What a fill keeps from one entry to the next.
+#[derive(Clone, Copy)]
+struct FillState {
+    column: usize,
+    cursor: f32,
+    pending_margin: Margins,
+    maximum: f32,
+    overflowed: bool,
+    column_has_content: bool,
+    empty_box_column: Option<usize>,
+    cut_margins: bool,
+}
+
+/// One fill of [`fill_chunk_with`], which starts a column before each of the
+/// entries `moved`, without the margins above them. A column end inside the
+/// chunk that falls where a break is avoided moves up as it is placed: the
+/// fill adds the box after the break it moves to to `moved` and goes on again
+/// from that box, so a fill places each entry at most once for each column
+/// end that moves past it. A `trial` fails at a column end that cannot move.
+#[allow(clippy::too_many_arguments)]
+fn fill_chunk_once(
+    paragraphs: &[Option<Paragraph>],
+    context: FragmentationContext,
+    height: f32,
+    resume: FlowCursor,
+    trailing_margin: bool,
+    strict: bool,
+    follows_content: bool,
+    trial: bool,
+    moved: &mut Vec<usize>,
 ) -> Option<Chunk> {
     let mut placements: Vec<Option<Placement>> = Vec::new();
     let mut column = 0usize;
@@ -1982,7 +2230,66 @@ fn fill_chunk_with(
                 .as_ref()
                 .is_some_and(|box_| box_.extents.is_empty() && !box_.break_before)
         });
-    for (paragraph_index, paragraph) in paragraphs.iter().enumerate().skip(resume.paragraph) {
+    // The state of the fill before each entry it placed, from which it goes
+    // on again when a column end moves up before one of them.
+    let mut checkpoints: Vec<FillState> = Vec::new();
+    let mut next = resume.paragraph;
+    // Column ends before this entry stay where they are.
+    let mut unchecked = resume.paragraph + 1;
+    loop {
+        // A column end before the entry just placed, which a break is
+        // avoided before, moves up to the last break before it in its column
+        // that nothing avoids.
+        if let Some(end) = next.checked_sub(1).filter(|&end| end >= unchecked) {
+            unchecked = next;
+            let avoided_column = placements
+                .last()
+                .and_then(Option::as_ref)
+                .filter(|placement| {
+                    placement.first_column > placement.entry_column
+                        && avoids_break_before(paragraphs, end, moved)
+                })
+                .map(|placement| placement.entry_column);
+            if let Some(avoided_column) = avoided_column {
+                match movable_break(paragraphs, &placements, resume, end, avoided_column, moved) {
+                    Some(index) => {
+                        let slot = index - resume.paragraph;
+                        FillState {
+                            column,
+                            cursor,
+                            pending_margin,
+                            maximum,
+                            overflowed,
+                            column_has_content,
+                            empty_box_column,
+                            cut_margins,
+                        } = checkpoints[slot];
+                        placements.truncate(slot);
+                        checkpoints.truncate(slot);
+                        note_moved(moved, index);
+                        (next, unchecked) = (index, index);
+                        continue;
+                    }
+                    None if trial => return None,
+                    None => {}
+                }
+            }
+        }
+        let Some(paragraph) = paragraphs.get(next) else {
+            break;
+        };
+        let paragraph_index = next;
+        next += 1;
+        checkpoints.push(FillState {
+            column,
+            cursor,
+            pending_margin,
+            maximum,
+            overflowed,
+            column_has_content,
+            empty_box_column,
+            cut_margins,
+        });
         placements.push(None);
         let slot = placements.len() - 1;
         let Some(paragraph) = paragraph else {
@@ -1993,10 +2300,19 @@ fn fill_chunk_with(
         } else {
             (0, 0.0)
         };
+        // A column end moved up before the entry is a break as a forced one
+        // is, which cuts the margin above the entry too.
+        let moved_here = moved.binary_search(&paragraph_index).is_ok();
+        let break_before = paragraph.break_before || moved_here;
+        let margin_top = if moved_here {
+            0.0
+        } else {
+            paragraph.margin_top
+        };
         // A forced break after content, an empty box included, starts the
         // next column, and the margins before it are cut (CSS Fragmentation
         // 3, 5.2).
-        if paragraph.break_before
+        if break_before
             && initial_line == 0
             && initial_offset <= 0.0
             && (column_has_content || empty_box_column == Some(column))
@@ -2022,14 +2338,13 @@ fn fill_chunk_with(
         // An unforced break discards the margin above the paragraph it ends
         // up before, so a paragraph resumed from its start has none either,
         // unless a forced break came before it, which keeps the margin.
-        let at_resumed_start = paragraph_index == resume.paragraph
-            && resume != FlowCursor::default()
-            && !paragraph.break_before;
-        let mut adjoining = if cut_margins && !paragraph.break_before {
+        let at_resumed_start =
+            paragraph_index == resume.paragraph && resume != FlowCursor::default() && !break_before;
+        let mut adjoining = if cut_margins && !break_before {
             Margins::default()
         } else {
             pending_margin.with(if initial_line == 0 && !at_resumed_start {
-                paragraph.margin_top
+                margin_top
             } else {
                 0.0
             })
@@ -3031,6 +3346,7 @@ pub(super) fn paginate(
             false,
             false,
             follows_content,
+            false,
         );
         work.charge(visited(&paragraphs, resume, filled.as_ref()))?;
         let Some(mut chunk) = filled else {
@@ -3056,7 +3372,16 @@ pub(super) fn paginate(
             for trial_strict in [room, false].into_iter().take(usize::from(room) + 1) {
                 strict = trial_strict;
                 let balance_fill = |height: f32| {
-                    fill_chunk_with(&paragraphs, context, height, resume, false, strict, false)
+                    fill_chunk_with(
+                        &paragraphs,
+                        context,
+                        height,
+                        resume,
+                        false,
+                        strict,
+                        false,
+                        true,
+                    )
                 };
                 let mut balanced = false;
                 let mut low = avoided_height(&paragraphs, resume, None).min(capacity);
@@ -3107,8 +3432,16 @@ pub(super) fn paginate(
                 .unwrap_or(0.0)
                 .min(capacity);
             if divided > chunk.group.height {
-                let filled =
-                    fill_chunk_with(&paragraphs, context, divided, resume, false, strict, false);
+                let filled = fill_chunk_with(
+                    &paragraphs,
+                    context,
+                    divided,
+                    resume,
+                    false,
+                    strict,
+                    false,
+                    false,
+                );
                 work.charge(visited(&paragraphs, resume, filled.as_ref()))?;
                 if let Some(candidate) = filled
                     && candidate.next.is_none()
