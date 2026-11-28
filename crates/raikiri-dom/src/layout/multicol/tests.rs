@@ -6739,6 +6739,22 @@ fn the_bottom_margin_of_a_block_that_ends_the_columns_counts_toward_their_height
 }
 
 #[test]
+fn a_negative_bottom_margin_of_a_block_that_ends_the_columns_does_not_shorten_them() {
+    // The columns hold the block's border box whole, as in Chromium.
+    for fill in ["column-fill:auto", "column-fill:balance"] {
+        let (mut doc, container, _) = column_container(
+            &format!("column-count:1;{fill}"),
+            &[
+                Part::Lines(1),
+                Part::Box("display:block;height:20px;margin-bottom:-10px"),
+            ],
+        );
+        lay_out_in_ahem(&mut doc, 180.0, 160.0);
+        assert_eq!(doc.nodes[container].layout.size.height, 40.0, "{fill}");
+    }
+}
+
+#[test]
 fn a_block_between_lines_with_a_bottom_margin_balances_columns_by_an_even_share() {
     // 40px of lines, the block and its 30px margin, and 40px of lines: 130px
     // over two columns of 65px. Values match Chromium.
