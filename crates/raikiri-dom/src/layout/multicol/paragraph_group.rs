@@ -316,11 +316,15 @@ impl Flow {
         // one row goes to one column as a wrapper.
         // The page stream, which passes no `pieces`, starts a column at a
         // forced break before or after a wrapper.
-        if !flow_wrapper(tree, id, !pieces)
-            || parent.is_none()
+        let wrapper = flow_wrapper(tree, id, !pieces)
+            && !(parent.is_none()
                 && layout_node(tree, id).display() == DisplayValue::FlowRoot
-                && holds_one_row_of_lines(tree, id)
-        {
+                && holds_one_row_of_lines(tree, id));
+        // A wrapper with a height of its own that the flow cannot model
+        // stands in it as a box, as it did before such wrappers joined it.
+        let own = (wrapper && !height_follows_content(tree, id))
+            .then(|| own_height(tree, id, &entry.2, self.entries.len()));
+        if !wrapper || own.is_some_and(|own| own.is_none()) {
             // Inside a wrapper, the flow takes paragraphs whose pieces hold
             // nothing but lines, between no padding or border, sized boxes
             // with no lines, and white space; the pieces are recorded without
@@ -373,11 +377,7 @@ impl Flow {
             )?;
         }
         let close = self.entries.len();
-        let tail = if height_follows_content(tree, id) {
-            None
-        } else {
-            Some(own_height(tree, id, &layout, open)?)
-        };
+        let tail = own.flatten();
         self.roles[open] = Role::Open(close);
         self.entries.push((
             id,
@@ -395,12 +395,18 @@ impl Flow {
     }
 }
 
-/// The height of the wrapper `id`, laid out as `layout`, whose start is the
-/// entry `open` of the flow, as the columns take it. A box with a height of its own keeps the bottom margin
-/// of its last box apart from its own (CSS 2, 8.3.1), so that margin is part
-/// of its content. `None` when its boxes reach past that height: their
-/// overflow would have to go on into later columns while what follows the
-/// wrapper starts where the wrapper ends, which the flow does not model.
+/// The height of the wrapper `id`, laid out as `layout`, whose start will be
+/// the entry `open` of the flow, as the columns take it.
+///
+/// A box with a height of its own keeps the bottom margin of its last box
+/// apart from its own (CSS 2, 8.3.1), so that margin is part of its content.
+/// A `min-height` or `max-height` that does not bind, or a height that
+/// computes to `auto`, leaves the wrapper as tall as its boxes, which collapse
+/// their margins through it as those of a wrapper with no height of its own
+/// do (Chromium; see [`OwnHeight::follows_content`]). `None` when the flow
+/// cannot model
+/// it: when its boxes reach past its height, whose overflow would go on into
+/// later columns while what follows the wrapper starts where it ends.
 fn own_height(
     tree: &LayoutSession<'_>,
     id: usize,
@@ -408,12 +414,17 @@ fn own_height(
     open: usize,
 ) -> Option<OwnHeight> {
     let (before, after) = block_edges(layout);
-    let children: Vec<BoxLayout> = flow_children(tree, id)
+    let children: Vec<usize> = flow_children(tree, id)
         .into_iter()
         .filter(|&child| {
             let node = &tree.nodes[child];
             node.is_in_document() && !node.is_display_none() && node.kind() == NodeKind::Element
         })
+        .collect();
+    // Layout leaves the offset of a `position: relative` box to the painter,
+    // so where the boxes are is where block flow put them.
+    let children: Vec<BoxLayout> = children
+        .into_iter()
         .map(|child| tree.nodes[child].layout)
         .collect();
     // Without padding or border above its first box, the top margin of that
@@ -429,17 +440,48 @@ fn own_height(
             .reduce(f32::min)
             .unwrap_or(0.0)
     };
-    let content_end = children
-        .iter()
-        .map(|child| child.location.y + child.size.height + child.margin.bottom)
-        .fold(before, f32::max);
-    let tail = layout.size.height - after - (content_end - start);
-    (tail.is_finite() && tail >= -f32::EPSILON).then_some(OwnHeight {
+    let end_of = |margins: bool| {
+        children
+            .iter()
+            .map(|child| {
+                let margin = if margins { child.margin.bottom } else { 0.0 };
+                child.location.y + child.size.height + margin
+            })
+            .fold(before, f32::max)
+            - start
+    };
+    let room = layout.size.height - after;
+    // A height that computes to `auto`, as a percentage of an indefinite one
+    // does, and a minimum or maximum that does not bind leave the wrapper
+    // as tall as its boxes.
+    if (room - end_of(false)).abs() <= SLICE_MIN_ROOM && computes_to_auto_height(tree, id) {
+        return Some(OwnHeight {
+            open,
+            height: layout.size.height,
+            tail: 0.0,
+            end: after,
+            follows_content: true,
+        });
+    }
+    let tail = room - end_of(true);
+    (tail.is_finite() && tail >= -SLICE_MIN_ROOM).then_some(OwnHeight {
         open,
         height: layout.size.height,
         tail: tail.max(0.0),
         end: after,
+        follows_content: false,
     })
+}
+
+/// Whether the `height` of `id` computes to `auto`: it is `auto`, or a
+/// percentage of a parent whose height is not a length (CSS 2, 10.5).
+fn computes_to_auto_height(tree: &LayoutSession<'_>, id: usize) -> bool {
+    let height = style_of(tree, id).size().height;
+    height.is_auto()
+        || resolve_dimension(height, None).is_none()
+            && tree.parent_of(id).is_none_or(|parent| {
+                style_dimension_length(style_of(tree, parent).size().height).is_none()
+            })
 }
 
 /// The height of a wrapper that has one of its own, as the columns take it.
@@ -455,6 +497,11 @@ pub(super) struct OwnHeight {
     tail: f32,
     /// The padding and border below its last box.
     end: f32,
+    /// Whether the wrapper is as tall as its boxes, as one whose `min-height`
+    /// or `max-height` does not bind is: its end is that of a wrapper with no
+    /// height of its own, and the margin below its last box collapses
+    /// through it.
+    follows_content: bool,
 }
 
 /// The number of paragraphs inside `id` when it is a wrapper whose boxes all
@@ -1239,9 +1286,12 @@ fn collect(
             // The room that the height of a wrapper leaves below its last
             // box is part of its end, which keeps the margins of that box
             // apart from its own.
-            let own = flow.tails[index];
+            // A wrapper as tall as its boxes ends as one with no height of
+            // its own does, but still needs this plan: the strategies for a
+            // chain of wrappers around one paragraph take no height.
+            room |= has_block_edges(tree, child) || flow.tails[index].is_some();
+            let own = flow.tails[index].filter(|own| !own.follows_content);
             let tail = own.map(|own| own.tail);
-            room |= has_block_edges(tree, child) || tail.is_some();
             let (before, after) = block_edges(&layout);
             let edge = if matches!(role, Role::Open(_)) {
                 before
@@ -1734,6 +1784,9 @@ fn wrapper_start(
     close: usize,
     resume: FlowCursor,
 ) -> Option<(usize, f32)> {
+    if open < resume.paragraph {
+        return None;
+    }
     (open..close).find_map(|index| {
         paragraphs.get(index)?.as_ref()?.extents.first()?;
         let placement = placements

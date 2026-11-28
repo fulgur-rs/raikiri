@@ -9497,3 +9497,32 @@ fn a_wrapper_inside_a_painted_one_has_a_piece_in_each_column_of_the_outer() {
         [(0, true), (1, true)]
     );
 }
+
+#[test]
+fn a_wrapper_whose_minimum_or_maximum_does_not_bind_collapses_margins_through_its_end() {
+    // Chromium: the wrapper is as tall as its three lines, and the 10px
+    // margin below the paragraph collapses through its end with its own
+    // margin, so the next paragraph starts 10px or 20px below it.
+    for (wrapper_css, next_y) in [
+        ("min-height:20px", 40.0),
+        ("max-height:500px;margin-bottom:20px", 50.0),
+    ] {
+        let (doc, wrapper, _, next) = sized_wrapper_columns(
+            TWO_FILLED_COLUMNS,
+            &format!("display:block;{wrapper_css};background:red"),
+            "display:block;margin-bottom:10px",
+            3,
+            3,
+        );
+        assert_eq!(
+            fragment_rects(&doc, wrapper),
+            [(0, 0.0, 0.0, 30.0)],
+            "{wrapper_css}"
+        );
+        assert_eq!(
+            fragment_rects(&doc, next),
+            [(0, 0.0, next_y, 30.0)],
+            "{wrapper_css}"
+        );
+    }
+}
