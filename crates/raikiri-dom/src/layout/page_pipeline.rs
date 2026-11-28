@@ -10841,8 +10841,9 @@ fn height_can_grow(document: &super::context::LayoutSession<'_>, block: usize) -
 /// whose height such a bound sets follows its content as it moves down: a
 /// minimum that holds the box taller than its `height`, or a maximum that
 /// holds it shorter. A box that does not resolve the keywords (see
-/// `bridge::honors_content_limits`), and one whose physical height is not the
-/// block axis of the pages, has neither.
+/// [`honors_content_limits`](crate::layout::bridge::honors_content_limits)),
+/// and one whose physical height is not the block axis of the pages, has
+/// neither.
 fn content_keyword_bounds(
     document: &super::context::LayoutSession<'_>,
     block: usize,
