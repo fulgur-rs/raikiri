@@ -10545,11 +10545,14 @@ fn a_block_among_lines_with_margins_goes_on_whole() {
 fn a_measure_of_the_columns_breaks_between_the_lines_of_a_block_among_lines() {
     // A flex line and a grid row measure the container before they lay it
     // out, and the measure breaks between the block's lines as the layout
-    // does: the columns are 60px tall either way. Values match Chromium.
-    for wrapper in [
-        "display:flex",
-        "display:flex;align-items:flex-start",
-        "display:grid",
+    // does: the columns are 60px tall either way, also for a block that
+    // lays out its content on its own. Values match Chromium.
+    for (wrapper, block_css) in [
+        ("display:flex", "display:block"),
+        ("display:flex;align-items:flex-start", "display:block"),
+        ("display:grid", "display:block"),
+        ("display:flex", "display:block;contain:layout"),
+        ("display:flex", "display:block;align-content:center"),
     ] {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", None::<&str>);
@@ -10561,19 +10564,25 @@ fn a_measure_of_the_columns_breaks_between_the_lines_of_a_block_among_lines() {
             Some("display:block;width:100px;column-count:2;column-gap:20px;orphans:1;widows:1"),
         );
         append_lines(&mut doc, container, 2, "x");
-        let block = doc.append_element(Some(container), "div", Some("display:block"));
+        let block = doc.append_element(Some(container), "div", Some(block_css));
         append_lines(&mut doc, block, 2, "y");
         let tail = doc.append_element(Some(container), "span", None::<&str>);
         doc.append_text(tail, "x");
         doc.append_element(Some(container), "br", None::<&str>);
         doc.append_text(container, "x");
         lay_out_in_ahem(&mut doc, 180.0, 160.0);
-        assert_eq!(doc.nodes[container].layout.size.height, 60.0, "{wrapper}");
-        assert_eq!(doc.nodes[outer].layout.size.height, 60.0, "{wrapper}");
+        assert_eq!(
+            doc.nodes[container].layout.size.height, 60.0,
+            "{wrapper} / {block_css}"
+        );
+        assert_eq!(
+            doc.nodes[outer].layout.size.height, 60.0,
+            "{wrapper} / {block_css}"
+        );
         assert_eq!(
             pieces_of(&doc, block),
             [(0, 0.0, 0.0, 40.0, 20.0), (1, 60.0, -40.0, 40.0, 20.0)],
-            "{wrapper}"
+            "{wrapper} / {block_css}"
         );
     }
 }

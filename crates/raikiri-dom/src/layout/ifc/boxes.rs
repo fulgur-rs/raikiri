@@ -3266,12 +3266,7 @@ fn layout_block_child(
     // taffy's own in-flow loop.
     let right = geometry.width - margin.left - width + geometry.edges.1;
     let snapshot = origin_resolved.then(|| ctx.snapshot());
-    // The columns of a paragraph break between the lines of such a block,
-    // so a measure of their height needs the lines, which only a layout of
-    // the block keeps. The layout that places the paragraph lays the block
-    // out again.
-    let keeps_lines = geometry.blocks_apart
-        && crate::layout::multicol::paragraph_spanners::breaks_between_lines(tree, node);
+    let keeps_lines = keeps_lines(tree, node, &geometry);
     let (output, floats_bottom, top, after, has_clearance, top_set) = loop {
         let mut child_ctx = ctx.sub_context_for_collapsing_child(
             geometry.top_edge + guess,
@@ -3967,6 +3962,16 @@ fn layout_vertical_block_child_with_edges(
     }
 }
 
+/// Whether a measure of the paragraph laid out with `geometry` lays out its
+/// block child `node` in full. The columns of a paragraph break between the
+/// lines of such a block, so a measure of their height needs the lines, which
+/// only a layout of the block keeps. The layout that places the paragraph
+/// lays the block out again.
+fn keeps_lines(tree: &LayoutSession<'_>, node: usize, geometry: &FlowGeometry) -> bool {
+    geometry.blocks_apart
+        && crate::layout::multicol::paragraph_spanners::breaks_between_lines(tree, node)
+}
+
 /// Whether the block child `node` takes part in the root's block formatting
 /// context, as the block algorithm decides for an in-flow item (see
 /// `shares_context` in [`block_flow`]): a block box that is not a scroll container
@@ -4164,7 +4169,7 @@ fn layout_formatting_context_child(
     );
     let inputs = formatting_context_inputs(
         &geometry,
-        if perform {
+        if perform || keeps_lines(tree, node, &geometry) {
             RunMode::PerformLayout
         } else {
             RunMode::ComputeSize
