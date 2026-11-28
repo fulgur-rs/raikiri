@@ -6503,12 +6503,13 @@ fn the_groups_around_spanners_are_kept_for_the_rules_between_their_columns() {
 
 #[test]
 fn a_paragraph_with_other_boxes_than_spanners_is_not_split_in_groups() {
-    // A float, an absolutely positioned box and a plain block each keep the
-    // paragraph in one column.
+    // A float, an absolutely positioned box and a block that forces a break
+    // in the columns each keep the paragraph in one column.
     for css in [
         "display:block;float:left;width:20px;height:20px",
         "display:block;position:absolute;width:20px;height:20px",
-        "display:block;height:20px",
+        "display:block;height:20px;break-before:column",
+        "display:block;height:20px;break-after:column",
     ] {
         let (mut doc, container, _) = column_container(
             "",
@@ -6525,6 +6526,203 @@ fn a_paragraph_with_other_boxes_than_spanners_is_not_split_in_groups() {
             "groups with {css}"
         );
     }
+}
+
+/// The box of `node` as `(x, y, width, height)`.
+fn box_rect(doc: &Document, node: usize) -> (f32, f32, f32, f32) {
+    let layout = doc.nodes[node].layout;
+    (
+        layout.location.x,
+        layout.location.y,
+        layout.size.width,
+        layout.size.height,
+    )
+}
+
+#[test]
+fn a_block_among_the_lines_of_a_paragraph_moves_to_its_column_with_its_margins() {
+    // Two lines and a block with 10px margins fill the first 80px column; the
+    // four lines after it fill the second. Values match Chromium.
+    let (mut doc, container, boxes) = column_container(
+        "",
+        &[
+            Part::Lines(2),
+            Part::Box("display:block;height:20px;margin:10px 0"),
+            Part::Lines(4),
+        ],
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    assert_eq!(
+        column_ranges(&doc, container),
+        [(0, 2, 0, 0.0, 0.0), (2, 6, 1, 60.0, 0.0)]
+    );
+    assert_eq!(box_rect(&doc, boxes[0]), (0.0, 50.0, 40.0, 20.0));
+    assert_eq!(doc.nodes[container].layout.size.height, 80.0);
+}
+
+#[test]
+fn a_block_before_or_after_the_lines_of_a_paragraph_takes_its_place_in_the_columns() {
+    // Values match Chromium.
+    let (mut doc, container, boxes) = column_container(
+        "",
+        &[Part::Box("display:block;height:20px"), Part::Lines(4)],
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    assert_eq!(
+        column_ranges(&doc, container),
+        [(0, 2, 0, 0.0, 20.0), (2, 4, 1, 60.0, 0.0)]
+    );
+    assert_eq!(box_rect(&doc, boxes[0]), (0.0, 0.0, 40.0, 20.0));
+
+    let (mut doc, container, boxes) = column_container(
+        "",
+        &[Part::Lines(4), Part::Box("display:block;height:20px")],
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    assert_eq!(
+        column_ranges(&doc, container),
+        [(0, 3, 0, 0.0, 0.0), (3, 4, 1, 60.0, 0.0)]
+    );
+    assert_eq!(box_rect(&doc, boxes[0]), (60.0, 20.0, 40.0, 20.0));
+}
+
+#[test]
+fn a_block_among_the_lines_of_a_paragraph_moves_to_its_column_from_the_right() {
+    // Values match Chromium.
+    let (mut doc, container, boxes) = column_container(
+        "direction:rtl",
+        &[
+            Part::Lines(2),
+            Part::Box("display:block;height:20px"),
+            Part::Lines(4),
+        ],
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    assert_eq!(
+        column_ranges(&doc, container),
+        [
+            (0, 2, 0, 60.0, 0.0),
+            (2, 3, 0, 60.0, 60.0),
+            (3, 6, 1, 0.0, 0.0),
+        ]
+    );
+    assert_eq!(box_rect(&doc, boxes[0]), (60.0, 40.0, 40.0, 20.0));
+}
+
+#[test]
+fn a_block_that_avoids_breaks_inside_moves_whole_to_the_next_column() {
+    // Values match Chromium.
+    let (mut doc, container, boxes) = column_container(
+        "",
+        &[
+            Part::Lines(3),
+            Part::Box("display:block;height:40px;break-inside:avoid"),
+            Part::Lines(1),
+        ],
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    assert_eq!(
+        column_ranges(&doc, container),
+        [(0, 3, 0, 0.0, 0.0), (3, 4, 1, 60.0, 40.0)]
+    );
+    assert_eq!(box_rect(&doc, boxes[0]), (60.0, 0.0, 40.0, 40.0));
+    // The rules between the columns run beside the column that holds only
+    // the block too.
+    let occupied: Vec<_> = doc.nodes[container].multicol_groups[0]
+        .occupied
+        .iter()
+        .copied()
+        .collect();
+    assert_eq!(occupied, [0, 1]);
+}
+
+#[test]
+fn the_lines_after_a_block_keep_orphans_together_in_the_next_column() {
+    // With `orphans: 2` the first line after the block cannot stay alone
+    // below it, so the four lines fill the second column. Values match
+    // Chromium.
+    let (mut doc, container, boxes) = column_container(
+        "orphans:2",
+        &[Part::Box("display:block;height:50px"), Part::Lines(4)],
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    assert_eq!(column_ranges(&doc, container), [(0, 4, 1, 60.0, 0.0)]);
+    assert_eq!(box_rect(&doc, boxes[0]), (0.0, 0.0, 40.0, 50.0));
+    assert_eq!(doc.nodes[container].layout.size.height, 80.0);
+}
+
+#[test]
+fn a_flex_item_of_columns_with_a_block_among_its_lines_is_as_tall_as_its_columns() {
+    // The flex container measures the columns before it lays them out.
+    // Values match Chromium.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0;font:20px/20px Ahem"));
+    let flex = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:flex;align-items:flex-start"),
+    );
+    let columns = doc.append_element(
+        Some(flex),
+        "div",
+        Some("display:block;width:100px;column-count:2;column-gap:20px;orphans:1;widows:1"),
+    );
+    bare_line(&mut doc, columns);
+    doc.append_text(columns, "x");
+    let block = doc.append_element(
+        Some(columns),
+        "div",
+        Some("display:block;height:20px;margin:10px 0"),
+    );
+    for _ in 0..3 {
+        bare_line(&mut doc, columns);
+    }
+    doc.append_text(columns, "x");
+    lay_out_in_ahem(&mut doc, 400.0, 400.0);
+    assert_eq!(doc.nodes[columns].layout.size.height, 80.0);
+    assert_eq!(box_rect(&doc, block), (0.0, 50.0, 40.0, 20.0));
+}
+
+#[test]
+fn a_block_among_the_lines_of_a_paragraph_fills_definite_columns_in_order() {
+    // Values match Chromium.
+    let (mut doc, container, boxes) = column_container(
+        "height:80px;column-fill:auto",
+        &[
+            Part::Lines(2),
+            Part::Box("display:block;height:20px"),
+            Part::Lines(4),
+        ],
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    assert_eq!(
+        column_ranges(&doc, container),
+        [
+            (0, 2, 0, 0.0, 0.0),
+            (2, 3, 0, 0.0, 60.0),
+            (3, 6, 1, 60.0, 0.0),
+        ]
+    );
+    assert_eq!(box_rect(&doc, boxes[0]), (0.0, 40.0, 40.0, 20.0));
+}
+
+#[test]
+fn a_paragraph_with_a_block_that_holds_a_float_is_not_split_in_groups() {
+    // The lines after the block flow around the float where the block was
+    // first laid out, so the block cannot move to another column alone.
+    let (mut doc, container, boxes) = column_container(
+        "",
+        &[Part::Lines(4), Part::Box("display:block"), Part::Lines(4)],
+    );
+    let inner = doc.append_element(Some(boxes[0]), "div", Some("display:block"));
+    doc.append_element(
+        Some(inner),
+        "div",
+        Some("display:block;float:left;width:20px;height:20px"),
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    assert!(doc.nodes[container].multicol_groups.is_empty());
 }
 
 #[test]
@@ -6640,6 +6838,35 @@ fn a_spanner_without_a_baseline_leaves_the_first_baseline_to_the_lines_below_it(
         bare_line(doc, columns);
     });
     assert_eq!(offset, 30.0);
+}
+
+#[test]
+fn the_first_baseline_of_columns_with_blocks_is_the_highest_of_their_columns() {
+    // A block with a line 30px down takes the first column, and the lines
+    // fill the second from its top: the line at the top gives the baseline.
+    // Values match Chromium.
+    let offset = baseline_offset_of_columns(|doc, columns| {
+        let block = doc.append_element(Some(columns), "div", Some("display:block;margin-top:30px"));
+        doc.append_text(block, "s");
+        for _ in 0..3 {
+            bare_line(doc, columns);
+        }
+    });
+    assert_eq!(offset, 0.0);
+    // A block without a baseline and a line below it in the first column, and
+    // a block whose line is 10px down at the top of the second.
+    let offset = baseline_offset_of_columns(|doc, columns| {
+        doc.append_element(Some(columns), "div", Some("display:block;height:40px"));
+        doc.append_text(columns, "x");
+        let block = doc.append_element(
+            Some(columns),
+            "div",
+            Some("display:block;padding-top:10px;break-inside:avoid"),
+        );
+        doc.append_text(block, "s");
+        doc.append_text(columns, "x");
+    });
+    assert_eq!(offset, 10.0);
 }
 
 #[test]

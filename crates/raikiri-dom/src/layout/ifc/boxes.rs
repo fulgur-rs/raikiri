@@ -204,6 +204,7 @@ pub(crate) fn layout_with_boxes_in(
             block_starts: Vec::new(),
             flow_end: 0.0,
             block_ends: Vec::new(),
+            block_boxes: Vec::new(),
             shifts: super::root::LineShifts::default(), // cov:ignore: empty IFC fallback has no runtime placement to measure.
             fragment_box_placements: Vec::new(), // cov:ignore: empty IFC fallback has no runtime placement to measure.
             fragmentainer_line_ranges: None, // cov:ignore: empty IFC fallback has no runtime placement to measure.
@@ -432,6 +433,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             block_starts: Vec::new(),
             flow_end: 0.0,
             block_ends: Vec::new(),
+            block_boxes: Vec::new(),
             shifts: super::root::LineShifts::default(),
             fragment_box_placements: Vec::new(),
             fragmentainer_line_ranges: Some(Vec::new()),
@@ -641,6 +643,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         block_starts: Vec::new(),
         flow_end: 0.0,
         block_ends: Vec::new(),
+        block_boxes: Vec::new(),
         shifts,
         fragment_box_placements,
         fragmentainer_line_ranges: Some(fragmentainer_line_ranges),
@@ -977,6 +980,7 @@ fn run_boxes_segment(
     let mut leading_unordered = false;
     let mut block_starts: Vec<(usize, usize, f32)> = Vec::new();
     let mut block_ends = Vec::new();
+    let mut block_boxes = Vec::new();
     let mut fragment_box_placements = Vec::new();
     let mut oof_candidates = OofCandidates::new();
     // The floats kept for the lines that the paragraph's inline-level
@@ -1658,7 +1662,11 @@ fn run_boxes_segment(
                 );
                 block_starts.push((start.0, start.0, start.1));
                 first_block_start.get_or_insert(start);
-                let mut block = if geometry.blocks_apart {
+                let mut block = if geometry.blocks_apart
+                    && crate::layout::multicol::paragraph_spanners::is_spanner(
+                        tree,
+                        node.0 as usize,
+                    ) {
                     BlockChild::apart(y, pending)
                 } else if root.legend == Some(node.0 as usize) {
                     legend_block_child(tree, node.0 as usize, legend_geometry, perform)
@@ -1713,6 +1721,12 @@ fn run_boxes_segment(
                 if !block.collapses_through {
                     ctx.commit_strut();
                 }
+                block_boxes.push((
+                    node.0 as usize,
+                    block.top,
+                    block.next_y.max(block.top),
+                    block.first_baseline,
+                ));
                 (y, pending) = (block.next_y, block.pending);
                 block_ends.push((node.0 as usize, lines.len(), y + pending.resolve()));
                 // A forced page break after the block starts the lines after
@@ -1882,6 +1896,7 @@ fn run_boxes_segment(
             block_starts,
             flow_end,
             block_ends,
+            block_boxes,
             shifts: super::root::LineShifts::default(),
             fragment_box_placements,
             fragmentainer_line_ranges: None,

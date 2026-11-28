@@ -2860,14 +2860,15 @@ fn measure_ifc_root(
     // split in its columns. Atomic inlines sit on the lines like text, and an
     // out-of-flow box goes with the line it sits on, so a paragraph that holds
     // only them is split line by line, in a nested container as well. A
-    // paragraph with floats, blocks or generated blocks of its own is laid out
-    // in one column as wide as the container.
+    // paragraph with blocks is split around them where
+    // `paragraph_spanners::supports` allows; one with floats or generated
+    // blocks of its own is laid out in one column as wide as the container.
     let nested_fragmentation = (!vertical)
         .then(|| fragmentation_context_for_ifc(tree, idx, &probe))
         .flatten();
     let atomics_only = probe.holds_only_line_boxes();
-    // Column spanners among the boxes split the paragraph in groups of lines,
-    // each of which fills the columns on its own.
+    // Column spanners among the boxes split the paragraph in groups of lines
+    // and other blocks, each of which fills the columns on its own.
     let spanner_groups = !vertical
         && nested_fragmentation.is_none()
         && crate::layout::multicol::paragraph_spanners::supports(tree, idx, &probe);
