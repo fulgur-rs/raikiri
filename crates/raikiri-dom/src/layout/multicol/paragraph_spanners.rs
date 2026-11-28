@@ -297,18 +297,25 @@ fn units_first_baseline(
     placed: &PlacedUnits,
     blocks: &[(usize, usize, usize)],
 ) -> Option<f32> {
+    let indices: std::collections::HashMap<usize, usize> = blocks
+        .iter()
+        .map(|&(node, _, index)| (node, index))
+        .collect();
     let mut done = std::collections::BTreeSet::new();
     let mut highest: Option<f32> = None;
     for (&(unit, _, _), &(column, dy)) in units.iter().zip(&placed.columns) {
         if done.contains(&column) {
             continue;
         }
+        // `dy` takes a unit to its column, so neither lookup scans the
+        // fragments or blocks of the group.
         let baseline = match unit {
-            Unit::Line(line) => line_baseline(lines, &placed.fragments, line),
-            Unit::Block(node) => blocks
-                .iter()
-                .find(|entry| entry.0 == node)
-                .and_then(|&(_, _, index)| block_box(lines, index, node).first_baseline)
+            Unit::Line(line) => lines.lines.get(line).map(|line| {
+                line.block_offset() + dy + line.baseline(shodo::geometry::BaselineKind::Alphabetic)
+            }),
+            Unit::Block(node) => indices
+                .get(&node)
+                .and_then(|&index| block_box(lines, index, node).first_baseline)
                 .map(|baseline| baseline + dy),
         };
         if let Some(baseline) = baseline {
