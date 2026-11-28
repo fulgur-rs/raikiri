@@ -2304,12 +2304,20 @@ fn a_background_below_the_first_wrapper_covers_each_column_of_the_paragraph() {
 
 #[test]
 fn a_size_contained_wrapper_keeps_the_height_of_an_empty_box() {
-    // Its content gives it no height, so the balanced height of the paragraph
-    // is not its height either.
+    // Its content gives it no height, so the columns have none either, and
+    // the paragraph overflows the first of them whole (Chromium).
     let paragraph = "<p>A<br>B<br>C<br>D</p>";
     compare_bodies(
         &format!("<div class=mc><div style='contain:size'>{paragraph}</div></div><p>E</p>"),
+        "<div style='position:absolute;left:0;top:0'>A<br>B<br>C<br>D</div><p>E</p>",
+        "",
+    );
+    // A wrapper with a height of zero is no taller, but the columns balance
+    // the lines that overflow it, and what follows them starts below
+    // (Chromium).
+    compare_bodies(
         &format!("<div class=mc><div style='height:0'>{paragraph}</div></div><p>E</p>"),
+        &format!("<div class=mc>{paragraph}</div><p>E</p>"),
         "",
     );
     // Containing only the inline size leaves the height to the content.

@@ -461,10 +461,6 @@ css/css-break/flexbox/single-line-column-flex-fragmentation-069a-print.html
 css/css-break/flexbox/single-line-row-flex-fragmentation-045-print.html
 css/css-break/flexbox/single-line-row-flex-fragmentation-046-print.html
 # --- css-break flexbox additional Fulgur v0.40.0 PASS slice (exact, 800x600, 2026-09-22) ---
-css/css-break/flexbox/flex-item-content-overflow-001a.html
-css/css-break/flexbox/flex-item-content-overflow-001b.html
-css/css-break/flexbox/flex-item-content-overflow-002a.html
-css/css-break/flexbox/flex-item-content-overflow-002b.html
 css/css-break/flexbox/single-line-row-flex-fragmentation-021.html
 css/css-break/flexbox/single-line-row-flex-fragmentation-049.html
 css/css-break/flexbox/single-line-row-flex-fragmentation-050.html
