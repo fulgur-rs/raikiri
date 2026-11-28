@@ -276,7 +276,7 @@ fn is_stream_block(tree: &LayoutSession<'_>, child: usize, allow_flow_root: bool
     let display = layout_node(tree, child).display();
     (display == DisplayValue::Block || allow_flow_root && display == DisplayValue::FlowRoot)
         && style_of(tree, child).clear() == Clear::None
-        && is_plain_box_aligned_or_not(tree, child, false, false, true)
+        && is_plain_box_aligned_or_not(tree, child, false, false, false, true)
 }
 
 /// Whether `child` is a plain block with nothing rendered inside it and
@@ -529,7 +529,7 @@ fn is_plain_box_but_clearance(
     breaks: bool,
     avoids: bool,
 ) -> bool {
-    is_plain_box_aligned_or_not(tree, child, allow_lines, breaks, false)
+    is_plain_box_aligned_or_not(tree, child, allow_lines, breaks, avoids, false)
 }
 
 /// [`is_plain_box_but_clearance`] that, with `aligned`, also takes a box
@@ -542,6 +542,7 @@ fn is_plain_box_aligned_or_not(
     child: usize,
     allow_lines: bool,
     breaks: bool,
+    avoids: bool,
     aligned: bool,
 ) -> bool {
     let node = layout_node(tree, child);
